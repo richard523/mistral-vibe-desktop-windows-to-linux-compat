@@ -74,11 +74,12 @@ Files installed:
    session, the "by default still broken" bug) while the app lives:
    - re-shows/un-minimizes the main window if hidden (close-to-tray relaunch)
    - re-applies the edge fix to the main window
-   - marks every non-main app window `_NET_WM_STATE_SKIP_TASKBAR,SKIP_PAGER`
-     **and minimizes it** (`xdotool windowminimize`; mutter ignores
-     `wmctrl -b add,hidden`) so alt-tab AND the overview show exactly one Vibe
-     window — the full-size Dictation helper no longer spawns as a visible
-     second window behind the main one
+   - marks every non-main app window `_NET_WM_STATE_SKIP_TASKBAR,SKIP_PAGER`;
+     the full-size **Dictation** window (the voice-input overlay host, created
+     ABOVE and kept mapped by the app, so minimize doesn't stick) is
+     `xdotool windowunmap`-ed — withdrawn from the WM entirely; other big
+     helpers (splash) are minimized. Result: exactly one Vibe window in
+     alt-tab/overview/on screen.
    - snaps near-fullscreen windows to (1920,29,1928x1023)
 3. `vibe-edge-fix --watch` daemon (200 ms poll over the whole window tree,
    depth 3) darkens every `steam_app_0` window's background/border and paints
