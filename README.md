@@ -84,9 +84,32 @@ Files installed:
      helpers (splash) are minimized. Result: exactly one Vibe window in
      alt-tab/overview/on screen.
    - snaps near-fullscreen windows to (1920,29,1928x1023)
-3. `vibe-edge-fix --watch` daemon (200 ms poll over the whole window tree,
-   depth 3) darkens every `steam_app_0` window's background/border and paints
-   its 8 px edge strips dark.
+3. `vibe-edge-fix --watch` daemon darkens every `steam_app_0` window's
+   background/border and paints its 8 px edge strips dark every 200 ms. It used
+   to re-walk the whole window tree per poll - **5076 top-level windows** on a
+   live Proton session, one `XGetClassHint` round trip each, 5x/s = **16.3 % of
+   a whole core**. It now caches the 29 app windows and learns new ones from
+   `CreateNotify`/`MapNotify` on the root, checks `/proc` for `Vibe.exe` every
+   5 s (three consecutive misses to exit - the umu-run -> proton -> wine
+   hand-off makes one miss normal) and re-walks fully every 5 min as a safety
+   net: **0.2 % of a core**, same strips. Replacing only the old
+   `popen("pgrep -f Vibe.exe")` was tried first and made it *worse* (16.3 % vs
+   12.9 %) - the fork was never the cost.
+4. The app runs in **its own cgroup scope**, and the keystroke path is stripped
+   of two avoidable hops (see §11 and CHANGELOG 2026-11-18):
+   - `systemd-run --user --scope --collect --unit=vibe-desktop-app
+     -p MemoryMin=2G -p MemoryHigh=8G -p CPUWeight=500 umu-run ...` - without
+     it the app inherits whatever scope the launching terminal is in. Launched
+     from a Zed terminal it inherited Zed's `MemoryHigh=2G` scope and the kernel
+     parked 4.15 GB of it in zram (UI renderer 36 MB resident / 672 MB swapped),
+     so every keystroke paid zram refaults on the renderer main thread.
+   - `XMODIFIERS=` (empty) - with `@im=ibus` every key goes through Xlib's XIM
+     client to ibus-x11 and back before wine sees it; no IME is in use here.
+   - `PROTON_USE_XALIA=0` - Proton's UIA bridge `xalia.exe` measured **89.5 % of a
+     whole core** for the app's entire lifetime and does nothing for an Electron
+     UI. Proton only sets the variable when it is absent, so `=0` is honoured.
+   - `DXVK_CONFIG=dxgi.maxFrameLatency=1` - the ANGLE -> D3D11 -> DXVK swapchain
+     otherwise presents up to two frames early (needs DXVK >= 2.4; 2.7.1 here).
 
 ## 4. The white-bar saga (root-caused)
 
@@ -314,3 +337,18 @@ Implications / mitigations (implemented):
   history — no tokens, keys, cookies, or credentials; only local path
   references). The app's encrypted auth blob lives only in the wine prefix,
   never in this repo.
+- **Typing latency is a cgroup problem, not an Electron one.** The lag in the
+  input box was the app parked in zram because it inherited the launching
+  terminal's scope (§3.4). It comes back if the app is ever started by a raw
+  `umu-run` instead of `vibe-desktop-launcher.sh` - check with
+  `systemctl --user show vibe-desktop-app.scope -p MemoryMin` (expect
+  `2147483648`) and `-p MemorySwapCurrent` (expect a few hundred KB, not GB).
+- Cgroup memory charges do **not** migrate with processes: moving running pids
+  into a scope (`echo <pid> > cgroup.procs`) leaves `memory.current` near zero
+  and the pages still charged to the old scope. Only a relaunch fixes the charge.
+- Keystroke latency cannot be measured on this machine: XTEST is inert
+  (Xwayland `-enable-ei-portal`; a plain X11 control client gets no `KeyPress`),
+  `XSendEvent` (`xdotool key --window`) is ignored by wine, GNOME refuses
+  `windowactivate`, and kernel-level `ydotool` events do nothing. Judge the fix
+  by feel, or measure the app's swap instead (`/proc/<pid>/status` `VmSwap`).
+  Same reason the tray/close tests use `wmctrl`, not synthetic input.

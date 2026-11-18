@@ -10,6 +10,54 @@ Reference machine: GNOME **Wayland** session with XWayland, Intel Iris Xe,
 
 ---
 
+## 4e5892d - Typing latency in the input box: the app was living in zram, in someone else's cgroup
+
+User report: "there's a bit of latency when typing into the input box." Not an
+Electron problem - a cgroup inheritance problem.
+
+- The launcher never created a cgroup, so the app joined whatever scope the
+  launching terminal was in. Launched from a Zed terminal that was Zed's
+  transient scope: `MemoryHigh=2G`, `MemoryMin=0`, no `CPUWeight`. The scope sat
+  at 2.09 GB charged with **29 MB "available"**, so the kernel parked the rest in
+  zram: scope `memory.swap.current` **4.15 GB**, and per process - UI renderer
+  (`CrRendererMain`) **36 MB resident / 672 MB swapped**, browser 226/690, GPU
+  270/370, second renderer 187/657, `vibe-app-server` 164/124.
+- Mechanism: the renderer main thread paid **synchronous zram decompression on
+  every keystroke**. Same failure class as the shell/MemoryMin and game-scope
+  MemoryMin fixes on this machine: a `MemoryHigh` with no floor means the hot set
+  is the first thing swapped.
+- Four launcher changes: own scope
+  (`systemd-run --user --scope --collect --unit=vibe-desktop-app
+  -p MemoryMin=2G -p MemoryHigh=8G -p CPUWeight=500`), `XMODIFIERS=` (empty - no
+  XIM round trip to ibus-x11 before wine sees the key), `PROTON_USE_XALIA=0`
+  (Proton only sets it when absent, so `=0` is honoured) and
+  `DXVK_CONFIG=dxgi.maxFrameLatency=1` (DXVK 2.7.1 >= 2.4).
+- Found on the way, all measured: `xalia.exe` (Proton's UIA bridge) burned
+  **89.5 % of a whole core** for the app's entire lifetime - 20:19 CPU seconds
+  over 1382 s - and does nothing for an Electron UI; the UI renderer had been
+  reclassified to nice **+5** by ananicy-cpp; load average 13.04.
+- `vibe-edge-fix` rewrite: removing its `popen("pgrep -f Vibe.exe")` (5 forks/s)
+  made it **worse** - 16.3 % vs 12.9 % of a core - which located the real cost:
+  a full tree walk per poll over **5076 top-level windows**, one `XGetClassHint`
+  round trip each. Now a cached 29-window set fed by `CreateNotify`/`MapNotify`
+  on the root, `/proc` check every 5 s (three misses to exit: the
+  umu-run -> proton -> wine hand-off makes a single miss normal), full rescan
+  every 5 min as a safety net: **0.2 % of a core**, edge strips unchanged.
+- Verified live after a relaunch: `memory.min` = 2147483648 enforced,
+  `memory.swap.current` 364 KB (was 4.15 GB), every app process 0 MB swap,
+  renderers back to 696 MB / 848 MB resident, main 902 MB, GPU 839 MB, `xalia`
+  absent, `XMODIFIERS=` in `/proc/<Vibe.exe>/environ`, load average 2.86.
+- Honest gap: no end-to-end keystroke number exists for this machine. XTEST is
+  inert here (Xwayland `-enable-ei-portal`), `XSendEvent` is ignored by wine,
+  GNOME refuses `windowactivate`, kernel-level `ydotool` input does nothing. The
+  user's fingers are the instrument; the swap figures are the evidence.
+- Trap for next time: cgroup memory charges do **not** migrate with processes, so
+  moving the running pids into a new scope leaves `memory.current` near zero and
+  the pages still charged to the old one. Only a relaunch fixes the charge. Also:
+  the launcher's "already running?" test is `pgrep -f 'Vibe.exe'`, which a dying
+  wine process still matches - relaunching too early takes the closed-to-tray
+  path and exits silently with no window.
+
 ## 8a8d8f0 - Dock icon reopens the running app instead of restarting it
 
 The bug the whole tray/close saga ended on: "closing the app minimizes it to

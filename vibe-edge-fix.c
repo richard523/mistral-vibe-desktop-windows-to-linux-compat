@@ -20,6 +20,9 @@
  */
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <dirent.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -40,18 +43,34 @@ static int is_app(Display *d, Window w) {
     return ok;
 }
 
+/* /proc scan instead of popen("pgrep -f Vibe\\.exe"): the fork+exec+pclose
+   cost 5x/s dominated this daemon's CPU (measured 12.9% of a whole core while
+   it exists only to repaint 4 edge strips). Same match, no fork. */
 static int app_alive(void) {
-    FILE *f = popen("pgrep -f 'Vibe\\.exe'", "r");
-    if (!f) return 1;
-    char buf[64];
-    int found = fgets(buf, sizeof buf, f) != NULL;
-    pclose(f);
+    DIR *dp = opendir("/proc");
+    if (!dp) return 1;
+    struct dirent *e;
+    int found = 0;
+    while (!found && (e = readdir(dp))) {
+        if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+        char path[128], buf[4096];
+        snprintf(path, sizeof path, "/proc/%s/cmdline", e->d_name);
+        int fd = open(path, O_RDONLY);
+        if (fd < 0) continue;
+        ssize_t n = read(fd, buf, sizeof buf - 1);
+        close(fd);
+        if (n <= 0) continue;
+        buf[n] = 0;
+        if (strstr(buf, "Vibe.exe")) found = 1;
+    }
+    closedir(dp);
     return found;
 }
 
-static void fix_window(Display *d, Window w) {
+/* returns 0 once the window is gone, so the cache can drop it */
+static int fix_window(Display *d, Window w) {
     XWindowAttributes a;
-    if (!XGetWindowAttributes(d, w, &a)) return;
+    if (!XGetWindowAttributes(d, w, &a)) return 0;
     XSetWindowBackgroundPixmap(d, w, None);   /* a pixmap would override the pixel */
     XSetWindowBackground(d, w, BG);
     XSetWindowBorder(d, w, BG);
@@ -64,17 +83,38 @@ static void fix_window(Display *d, Window w) {
         XFillRectangle(d, w, gc, 0, 0, a.width, 8);
         XFreeGC(d, gc);
     }
+    return 1;
 }
 
-static void walk(Display *d, Window w, int depth) {
+/* Cache of the windows that actually need painting. A tree walk is 5076
+   XGetClassHint round trips on a live Proton session (measured 16% of a whole
+   core at 5 polls/s); walking once and tracking new windows from CreateNotify
+   on the root costs 29 windows per poll instead. */
+#define MAXW 256
+static Window wins[MAXW];
+static int nwins;
+
+static void adopt(Window w) {
+    for (int i = 0; i < nwins; i++) if (wins[i] == w) return;
+    if (nwins < MAXW) wins[nwins++] = w;
+}
+
+static void collect(Display *d, Window w, int depth) {
     if (depth < 0) return;
-    if (is_app(d, w)) fix_window(d, w);
+    if (is_app(d, w)) adopt(w);
     Window r, p, *kids = NULL;
     unsigned int n = 0;
     if (XQueryTree(d, w, &r, &p, &kids, &n)) {
-        for (unsigned int i = 0; i < n; i++) walk(d, kids[i], depth - 1);
+        for (unsigned int i = 0; i < n; i++) collect(d, kids[i], depth - 1);
         if (kids) XFree(kids);
     }
+}
+
+static void repaint_all(Display *d) {
+    int k = 0;
+    for (int i = 0; i < nwins; i++)
+        if (fix_window(d, wins[i])) wins[k++] = wins[i];
+    nwins = k;
 }
 
 int main(int argc, char **argv) {
@@ -101,10 +141,30 @@ int main(int argc, char **argv) {
             usleep(200000);
         }
     }
-    while (app_alive()) {
-        walk(d, root, 3);
+    XSelectInput(d, root, SubstructureNotifyMask);
+    collect(d, root, 3);
+    int alive = 1, tick = 0, misses = 0;
+    while (alive) {
+        repaint_all(d);              /* Chromium repaints the frame white again, so
+                                        the strips need overpainting every poll */
         XFlush(d);
-        usleep(200000);
+        struct pollfd pfd = { ConnectionNumber(d), POLLIN, 0 };
+        if (poll(&pfd, 1, 200) > 0 && (pfd.revents & POLLIN)) {
+            while (XPending(d)) {
+                XEvent e;
+                XNextEvent(d, &e);
+                if (e.type == CreateNotify) collect(d, e.xcreatewindow.window, 1);
+                else if (e.type == MapNotify) collect(d, e.xmap.window, 1);
+            }
+        }
+        if (++tick % 25 == 0) {           /* /proc scan every 5s, not 5x/s */
+            /* a single miss is a mid-boot hiccup (umu-run -> proton -> wine
+               hand-off), not the app closing: require 3 in a row (~15s) */
+            if (app_alive()) misses = 0;
+            else if (++misses >= 3) alive = 0;
+        }
+        if (tick % 1500 == 0) collect(d, root, 3);  /* safety net: full rescan every 5min
+                                                       in case a CreateNotify was missed */
     }
     fprintf(stderr, "app gone, exiting\n");
     return 0;

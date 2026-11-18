@@ -17,6 +17,19 @@ GEWINE="$PROTONPATH/files/bin/wine"
 # boot is CPU-bound app init under wine; less logging I/O + higher priority
 export WINEDEBUG=-all
 
+# --- keystroke path (2026-11-18, see CHANGELOG.md for the measurements)
+# XIM: with XMODIFIERS=@im=ibus every key the app receives is routed through
+# Xlib's XIM client to ibus-x11 and back before wine sees it. No IME is used
+# here (US English), so the round trip is pure latency (and this machine has a
+# documented history of a stale XIM connection eating keys outright). Empty it.
+export XMODIFIERS=
+# Xalia (Proton's UIA/accessibility bridge) measured 89% of a whole core for
+# the entire app lifetime and does nothing for an Electron UI - disable it.
+export PROTON_USE_XALIA=0
+# DXVK presents one frame early for the ANGLE->D3D11->DXVK swapchain. Declares
+# maxFrameLatency 1 so input->photon loses up to two frames (~33 ms at 60 Hz).
+export DXVK_CONFIG="dxgi.maxFrameLatency=1"
+
 WIN_APP='C:\users\'"$USER"'\AppData\Local\Programs\vibe\Vibe.exe'
 LOG_DIR="$HOME/.local/state/vibe-desktop"
 mkdir -p "$LOG_DIR"
@@ -247,4 +260,16 @@ fi
     done
 ) 9>/tmp/vibe-desktop-watcher.lock &
 
-exec setsid nice -n -5 umu-run "$WIN_APP" < /dev/null >> "$LOG_DIR/run.log" 2>&1
+# Own cgroup (2026-11-18): launched from a terminal inside a confined scope the
+# app inherits that scope; here it was Zed's transient one (MemoryHigh=2G,
+# MemoryMin=0), and the kernel parked the working set in zram - scope
+# memory.swap.current 4.15 GB, the UI renderer at 36 MB resident / 672 MB
+# swapped - so every keystroke paid synchronous zram refaults on the renderer's
+# main thread. A scope of its own with a memory floor keeps the hot set
+# resident. CPUWeight 500 lifts it above default-weight background work.
+# Verified live: memory.min 2147483648 enforced, memory.swap.current 364 KB,
+# every app process 0 MB swap, renderers back to 696/848 MB resident.
+exec setsid nice -n -5 systemd-run --user --scope --collect \
+    --unit=vibe-desktop-app \
+    -p MemoryMin=2G -p MemoryHigh=8G -p CPUWeight=500 \
+    umu-run "$WIN_APP" < /dev/null >> "$LOG_DIR/run.log" 2>&1
