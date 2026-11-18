@@ -277,7 +277,7 @@ Implications / mitigations (implemented):
 
 | file | purpose |
 |---|---|
-| `install.sh` | one-shot installer: extracts app-64.7z into the prefix, installs scripts, compiles edge-fix, installs .desktop/autostart entries |
+| `install.sh` | one-shot installer: extracts app-64.7z into the prefix, installs Git for Windows into the prefix + its PATH (§12), installs scripts, compiles edge-fix, installs .desktop/autostart entries |
 | `vibe-desktop-launcher.sh` | the launcher (installed to `~/.local/bin/vibe-desktop`) |
 | `vibe-edge-fix.c` | white-edge fixer, compiled to `~/.local/bin/vibe-edge-fix` (`cc -O2 -lX11`) |
 | `mistral-vibe-desktop.desktop` | app entry (install.sh rewrites the Exec path to $HOME) |
@@ -352,3 +352,53 @@ Implications / mitigations (implemented):
   `windowactivate`, and kernel-level `ydotool` events do nothing. Judge the fix
   by feel, or measure the app's swap instead (`/proc/<pid>/status` `VmSwap`).
   Same reason the tray/close tests use `wmctrl`, not synthetic input.
+- Git: the app's own `git` lives **inside the prefix** and only exists after
+  `install.sh` has run (§12). Nothing on the host PATH is used, so a repo
+  operation that fails with "git not found" means the prefix install or its
+  `Path` entry is missing, not that the host git is broken.
+
+## 12. Git inside the prefix (Git for Windows 2.56.1)
+
+The app's coding features shell out to `git`. A **Linux** git cannot serve them:
+Electron spawns it through `CreateProcess`, which under Proton only starts PE
+binaries, so an ELF `git` on the host `PATH` is invisible to the app (the bundle
+carries a `git_not_found` error code, plus `--no-optional-locks` and
+`-c core.fsmonitor=false` / `GIT_TERMINAL_PROMPT` for its git calls). So the
+prefix gets its own Windows git — `install.sh` does all of this:
+
+- **Payload**: Git for Windows 2.56.1 portable —
+  `PortableGit-2.56.1-64-bit.7z.exe`, 60,125,512 bytes, sha256
+  `9dd04a608ceb5f6ab32a73709e0ecb159d211da71b697c45ff81f6dd0c6b49c7`
+  (matches the release notes), 9622 files / 412 MB extracted with 7z into
+  `$PREFIX/drive_c/Program Files/Git`. Same extraction trick as the app itself,
+  because the installers fail under wine (§1). 2.56.x matches the host git
+  (2.56.0), so both sides read the same repository format.
+- **Discovery**: one entry appended to the prefix's own
+  `HKLM\System\CurrentControlSet\Control\Session Manager\Environment\Path`:
+  `C:\Program Files\Git\cmd` — `cmd` only, never `usr\bin`, which ships
+  `bash.exe`, `sort.exe`, `find.exe` and `link.exe` and would shadow wine's
+  system32 tools. Verified from a fresh wine process: `where git` →
+  `C:\Program Files\Git\cmd\git.exe`, `git --version` →
+  `git version 2.56.1.windows.1`.
+- **Relaunch required**: `PATH` is built from the registry when a process
+  starts, so an already-running app keeps its old environment (and its Electron
+  children inherit that one) until it is restarted.
+- **Line endings**: the portable build ships `core.autocrlf = true`, which
+  rewrites LF files in the Linux repos this app edits. `install.sh` flips it to
+  `false` in `C:\Program Files\Git\etc\gitconfig` (system scope).
+- **File modes must be ignored**: wine's `Z:` stat reports files as `100644`,
+  so any repo whose index records `100755` shows phantom modifications with
+  zero-line diffs — measured in this repo: `git diff --raw install.sh` →
+  `:100755 100644 9e2ba7d 0000000 M install.sh`, same for
+  `vibe-desktop-launcher.sh` and `tools/test-dock-restore.sh`. The launcher
+  exports `GIT_CONFIG_COUNT=1`, `GIT_CONFIG_KEY_0=core.filemode`,
+  `GIT_CONFIG_VALUE_0=false`; `GIT_CONFIG_*` has command scope, so it overrides
+  the repo's own `core.filemode = true` (verified: `status --porcelain` empty,
+  `config --get core.filemode` → `false`).
+- **Verified**: `init`, `add`, `commit`, `log`, `status`, `rev-parse`, `diff` on
+  `Z:` paths and `git ls-remote https://github.com/mistralai/mistral-vibe.git`
+  (HTTPS with the bundled CA; wine prints harmless
+  `kerberos/ntlm ... no support` lines on stderr).
+- **Limits**: no symlinks (`core.symlinks = false`), exec-bit changes are
+  invisible (the override above), and credentials go to Git for Windows' own
+  helper (`helper-selector` / GCM) — interactive auth under Proton is untested.

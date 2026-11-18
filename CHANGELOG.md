@@ -10,6 +10,44 @@ Reference machine: GNOME **Wayland** session with XWayland, Intel Iris Xe,
 
 ---
 
+## (pending) - Git for Windows installed inside the prefix (the app had no git)
+
+User request: "install git in this proton". The app's coding features call
+`git`, and wine's `CreateProcess` only starts PE binaries, so the Linux git on
+the host `PATH` is unreachable from the app — the prefix needs its own.
+
+- Payload: `PortableGit-2.56.1-64-bit.7z.exe` (60,125,512 bytes, sha256
+  `9dd04a608ceb5f6ab32a73709e0ecb159d211da71b697c45ff81f6dd0c6b49c7`, matching
+  the release notes) extracted with 7z — the installer route fails under wine,
+  same as the app's own NSIS installer (§1). 9622 files, 412 MB at
+  `C:\Program Files\Git`. 2.56.x matches the host git 2.56.0, so both sides
+  read the same repository format.
+- PATH: appended `C:\Program Files\Git\cmd` to the prefix's system
+  `Environment\Path` (`cmd` only — `usr\bin` ships `bash.exe`, `sort.exe`,
+  `find.exe`, `link.exe` and would shadow wine's system32 tools). Verified from
+  a fresh wine process: `where git` → `C:\Program Files\Git\cmd\git.exe`,
+  `git --version` → `git version 2.56.1.windows.1`. A `wine reg` call from the
+  host attaches to the app's live wineserver (process count stayed at 1), so
+  the write lands in the running hive and flushes on app exit — no clobber risk.
+  The **running** app still needs a relaunch: `PATH` is built at process start.
+- Two defaults had to be overridden:
+  - `core.autocrlf = true` (portable default) would rewrite LF files in the
+    Linux repos this app edits → set to `false` in `etc/gitconfig`.
+  - Wine's `Z:` stat reports every file as `100644`, so repos whose index
+    records `100755` showed phantom modifications with **0-line diffs**:
+    `git diff --raw install.sh` → `:100755 100644 9e2ba7d 0000000 M install.sh`
+    (same for `vibe-desktop-launcher.sh`, `tools/test-dock-restore.sh`). The
+    launcher now exports `GIT_CONFIG_COUNT=1` /
+    `GIT_CONFIG_KEY_0=core.filemode` / `GIT_CONFIG_VALUE_0=false`; that has
+    command scope, so it beats the repo's own `core.filemode = true` (verified:
+    `status --porcelain` empty, `config --get core.filemode` → `false`).
+- Verified working: `init`, `add`, `commit`, `log`, `status`, `rev-parse`,
+  `diff` on `Z:` paths, and `git ls-remote https://github.com/...` over HTTPS
+  with the bundled CA (wine prints harmless `no Kerberos/NTLM support` lines).
+- `install.sh` does all of it now — pinned version + sha256, download, 7z
+  extract, PATH entry, autocrlf patch — and is idempotent (re-runs skip the
+  payload). README §12.
+
 ## 33df8fb - Typing latency in the input box: the app was living in zram, in someone else's cgroup
 
 User report: "there's a bit of latency when typing into the input box." Not an

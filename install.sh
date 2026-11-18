@@ -24,6 +24,37 @@ rm -rf "$APPDIR"
 cp -a "$TMP/payload" "$APPDIR"
 rm -rf "$TMP"
 
+echo "== Git for Windows inside the prefix (the app shells out to git and wine's"
+echo "   CreateProcess cannot run an ELF binary, so the Linux git is unreachable)"
+GIT_VER=2.56.1
+GIT_SHA=9dd04a608ceb5f6ab32a73709e0ecb159d211da71b697c45ff81f6dd0c6b49c7
+GIT_PKG="$HOME/Downloads/PortableGit-$GIT_VER-64-bit.7z.exe"
+GIT_DIR="$PREFIX/drive_c/Program Files/Git"
+GE_WINE="$GE/files/bin/wine"
+if [ -d "$GIT_DIR/ucrt64/bin" ]; then
+    echo "   already installed: $GIT_DIR"
+else
+    # portable build: the NSIS/Inno installers fail under wine, same as the app's own
+    [ -f "$GIT_PKG" ] || curl -fL -o "$GIT_PKG" \
+        "https://github.com/git-for-windows/git/releases/download/v$GIT_VER.windows.1/PortableGit-$GIT_VER-64-bit.7z.exe"
+    echo "$GIT_SHA  $GIT_PKG" | sha256sum -c - >/dev/null
+    7z x "$GIT_PKG" -o"$TMP/git" >/dev/null
+    mkdir -p "$GIT_DIR"
+    cp -a "$TMP/git/." "$GIT_DIR/"
+    rm -rf "$TMP"
+fi
+# portable default is autocrlf=true, which rewrites LF files in the Linux repos this app edits
+sed -i 's/^\tautocrlf = true$/\tautocrlf = false/' "$GIT_DIR/etc/gitconfig"
+# only ...\cmd on PATH: ...\usr\bin ships bash/sort/find/link and would shadow wine's system32 tools
+GIT_BIN='C:\Program Files\Git\cmd'
+ENVKEY='HKLM\System\CurrentControlSet\Control\Session Manager\Environment'
+CURPATH=$(WINEPREFIX="$PREFIX" "$GE_WINE" reg query "$ENVKEY" /v Path 2>/dev/null | tr -d '\r' | sed -n 's/^.*REG_EXPAND_SZ[[:space:]]*//p')
+case "$CURPATH" in
+    *'Git\cmd'*) echo "   PATH already has $GIT_BIN" ;;
+    *) WINEPREFIX="$PREFIX" "$GE_WINE" reg add "$ENVKEY" /v Path /t REG_EXPAND_SZ /d "$CURPATH;$GIT_BIN" /f >/dev/null
+       echo "   PATH += $GIT_BIN" ;;
+esac
+
 echo "== install scripts"
 mkdir -p "$BIN" "$HOME/.local/state/vibe-desktop"
 cp "$HERE/vibe-desktop-launcher.sh" "$BIN/vibe-desktop"

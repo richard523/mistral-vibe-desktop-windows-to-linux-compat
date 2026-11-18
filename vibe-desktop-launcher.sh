@@ -29,6 +29,15 @@ export PROTON_USE_XALIA=0
 # DXVK presents one frame early for the ANGLE->D3D11->DXVK swapchain. Declares
 # maxFrameLatency 1 so input->photon loses up to two frames (~33 ms at 60 Hz).
 export DXVK_CONFIG="dxgi.maxFrameLatency=1"
+# Git: the app shells out to the Git for Windows installed inside the prefix
+# (README section 12 - an ELF git on the host PATH is not reachable through
+# wine's CreateProcess). Wine's Z: stat reports every file as 100644, so repos
+# whose index records 100755 (this one included) show phantom modifications
+# with zero-line diffs. GIT_CONFIG_* has command scope, so this beats the
+# repo's own core.filemode = true for every git the app spawns.
+export GIT_CONFIG_COUNT=1
+export GIT_CONFIG_KEY_0=core.filemode
+export GIT_CONFIG_VALUE_0=false
 
 WIN_APP='C:\users\'"$USER"'\AppData\Local\Programs\vibe\Vibe.exe'
 LOG_DIR="$HOME/.local/state/vibe-desktop"
