@@ -58,6 +58,15 @@ int main(int argc, char **argv) {
 
     /* ignore X errors (windows dying mid-scan) */
     fprintf(stderr, "watching...\n");
+    /* fresh launches start us before Vibe.exe exists; wait for it to appear
+       (umu/wine boot takes seconds) instead of exiting immediately */
+    {
+        int waited = 0;
+        while (!app_alive()) {
+            if (++waited > 300) { fprintf(stderr, "no app after 60s, exiting\n"); return 0; }
+            usleep(200000);
+        }
+    }
     while (app_alive()) {
         Window r, p, *kids = NULL;
         unsigned int n = 0;

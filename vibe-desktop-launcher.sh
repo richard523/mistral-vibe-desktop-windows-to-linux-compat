@@ -111,6 +111,14 @@ fi
 #     edge overhang renders off-monitor (belt and braces).
 (
     flock -n 9 || exit 0   # only one watcher loop system-wide
+    # Fresh launches reach here before umu/wine has spawned Vibe.exe; without
+    # this wait the `while pgrep` below is false at t=0 and the watcher dies
+    # instantly -> no edge-fix, no helper hiding, no snap on cold start.
+    n=0
+    while ! pgrep -f 'Vibe\.exe' > /dev/null 2>&1; do
+        n=$((n+1)); [ "$n" -gt 180 ] && exit 0
+        sleep 1
+    done
     "$HOME/.local/bin/vibe-edge-fix" --watch > /dev/null 2>&1 &
     while pgrep -f 'Vibe\.exe' > /dev/null 2>&1; do
         WID=$(find_main)
@@ -139,7 +147,7 @@ fi
             xdotool windowmove "$WID" 1920 29 2>/dev/null
             xdotool windowsize "$WID" 1928 1023 2>/dev/null
         fi
-        sleep 2
+        sleep 1
     done
 ) 9>/tmp/vibe-desktop-watcher.lock &
 
