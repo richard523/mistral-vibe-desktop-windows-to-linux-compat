@@ -166,6 +166,38 @@ toggle-churn, and close→relaunch states (window recreated dark within 200 ms).
   (`".../Proton-GE Latest/files/bin/wine" reg add ...` with WINEPREFIX set) —
   seconds per call, no umu runtime spin-up.
 
+## 9. Boot time: why it's slow (measured)
+
+Cold-launch phases, measured by polling every 0.5s from launcher start
+(two runs, consistent):
+
+| phase | time |
+|---|---|
+| umu/pressure-vessel + wineserver + Vibe.exe spawn | ~0.5 s |
+| first X window created (steam_app_0) | ~2.0 s |
+| first window MAPPED + painted | ~14 s |
+
+So the ~12 s gap between "X window exists" and "window shown" is the app's own
+init, and it is **CPU-bound, not network-bound**: sampling during boot shows the
+Vibe processes at 200-400% CPU continuously from t=4s to t=13s. That is the
+Electron main process loading the 302 MB `app.asar` + bytenode `.jsc` modules
+and running its effect-runtime init under wine; the asar read itself is fast
+(0.3 s warm page cache), so it's parse/interpret/JIT work on the emulated stack.
+run.log also shows per-boot noise that is NOT the bottleneck but adds logging
+I/O: repeated `WSALookupServiceBegin failed with: 8` (Chromium network-change
+notifier under wine), a `desktop_secret_store_failed` safeStorage decrypt
+fallback (no keyring in the prefix), and a 5 s `TimeoutError` in the
+transfer-rule chunk.
+
+Implications / mitigations (implemented):
+- The expensive part is one-time per cold start; once running, the launcher's
+  already-running path shows the window in well under a second. So keep the app
+  alive (close-to-tray) instead of quitting it.
+- Autostart at login (XDG .desktop in ~/.config/autostart) so the ~14 s cold
+  boot happens during login, not when the user clicks the icon.
+- `WINEDEBUG=-all` and `nice -n -5` in the launcher cut logging overhead and
+  give the CPU-bound init priority.
+
 ## 8. Remaining caveats
 
 - Auto-update can't self-apply (would re-run the NSIS installer under wine,
