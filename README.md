@@ -204,6 +204,26 @@ Implications / mitigations (implemented):
   (The app's own `openAtLogin` config writes a Windows Run key, which does
   nothing under wine - hence the XDG entry.)
 
+## 10. Clickable tray icon (`vibe-tray.py`)
+
+The app's own Windows tray icon never reaches the GNOME desktop (wine has no
+SNI/XEmbed owner here; `_NET_SYSTEM_TRAY_S0` has no owner), so `vibe-tray.py`
+(a tiny AyatanaAppIndicator3 daemon — the `appindicatorsupport` GNOME extension
+is installed and shows it in the top bar) provides the icon instead:
+- **left-click / "Show Vibe"** runs `~/.local/bin/vibe-desktop`, which:
+  - app running with a window (even minimized): `wmctrl -i -a` — restores in
+    ~50-90 ms (measured)
+  - app running but windowless (closed to tray): the Electron second-instance
+    handoff does NOT reliably recreate the window under wine (measured), so the
+    launcher kills the app and re-execs itself in the background → full
+    cold-start path (watcher + edge-fix + app); the click returns immediately
+    and the window is back after one cold boot (~15 s)
+  - app not running: normal cold start
+- **"Quit Vibe"** kills the app.
+- Icon dims (PASSIVE) while the app isn't running; clicking still launches it.
+- Started by the launcher (`ensure_tray`) and via XDG autostart
+  (`vibe-tray.desktop` in ~/.config/autostart).
+
 ## 8. Remaining caveats
 
 - Auto-update can't self-apply (would re-run the NSIS installer under wine,

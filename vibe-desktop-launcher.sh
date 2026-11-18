@@ -13,6 +13,7 @@
 export WINEPREFIX="$HOME/.local/share/wineprefixes/vibe-desktop"
 export GAMEID=0
 export PROTONPATH="$HOME/.local/share/Steam/compatibilitytools.d/Proton-GE Latest"
+GEWINE="$PROTONPATH/files/bin/wine"
 # boot is CPU-bound app init under wine; less logging I/O + higher priority
 export WINEDEBUG=-all
 
@@ -26,18 +27,21 @@ if [ ! -f "$WINEPREFIX/drive_c/users/$USER/AppData/Local/Programs/vibe/Vibe.exe"
 fi
 
 wgeo() { timeout 3 xdotool getwindowgeometry --shell "$1" 2>/dev/null; }
-vis_list() { timeout 5 xdotool search --onlyvisible --class steam_app_0 2>/dev/null; }
+# managed windows (wmctrl lists minimized ones too, but NOT windows we withdrew
+# with windowunmap) - decimal ids
+managed_list() { wmctrl -l 2>/dev/null | awk '{print strtonum($1)}'; }
 
-# The real main (chat) window = largest VISIBLE app window whose title is not a
+# The real main (chat) window = largest MANAGED app window whose title is not a
 # helper name. Helpers: 'Default IME'/'Input' (IME), 'Dictation' and
 # 'le-chat-desktop' (the splash window that becomes the Dictation window - it
 # is only ~0.4% smaller than the chat window, so area alone can't tell them
-# apart; the title is the discriminator). --onlyvisible so already-withdrawn
-# helpers are never candidates. Untitled windows are allowed (chat can be
-# untitled); at startup the splash then wins until the titled chat appears.
+# apart; the title is the discriminator). Withdrawn helpers are unmanaged, so
+# they never show up here. Untitled windows are allowed (chat can be untitled).
 find_main() {
     BEST=""; BESTAREA=0
-    for w in $(vis_list); do
+    for w in $(managed_list); do
+        cls=$(xprop -id "$w" WM_CLASS 2>/dev/null | awk -F'"' '{print $4}')
+        [ "$cls" = "steam_app_0" ] || continue
         n=$(timeout 3 xdotool getwindowname "$w" 2>/dev/null)
         case "$n" in 'Default IME'|'Input'|'Dictation'|'le-chat-desktop') continue;; esac
         g=$(wgeo "$w")
@@ -78,16 +82,34 @@ show_wid() {
     fi
 }
 
-# Already running with a window? Make sure the edge-fixer daemon is up, re-show
-# the window, done. (If running windowless, fall through: the new instance makes
-# the app recreate its window, and the watcher below maps it.)
+# clickable tray icon (the app's own Windows tray icon never reaches GNOME);
+# clicking it runs this launcher, which shows or relaunches the app
+ensure_tray() {
+    pgrep -f 'vibe-tray.p[y]' > /dev/null 2>&1 || setsid python3 "$HOME/.local/bin/vibe-tray.py" > /dev/null 2>&1 &
+}
+
+# Already running? Ensure daemons, then either re-show the window (fast path)
+# or, if it was closed to tray (windowless), trigger the second-instance handoff
+# in the background and return - a tray click must never hang.
 if pgrep -f 'Vibe\.exe' > /dev/null 2>&1; then
     pgrep -f 'vibe-edge-fix --watc[h]' > /dev/null 2>&1 || "$HOME/.local/bin/vibe-edge-fix" --watch > /dev/null 2>&1 &
+    ensure_tray
     WID=$(find_main)
     if [ -n "$WID" ]; then
         show_wid "$WID" 1
         exit 0
     fi
+    # app running but windowless (closed to tray): the Electron second-instance
+    # handoff does NOT reliably recreate the window under wine (measured), so
+    # kill it and re-exec ourselves in the background -> full cold-start path
+    # (watcher + edge-fix + umu-run). The tray click returns immediately; the
+    # window is back after one cold boot (~15s).
+    pkill -f 'Vibe\.exe' 2>/dev/null
+    sleep 1
+    WINEPREFIX="$WINEPREFIX" "$GEWINE" wineserver -k 2>/dev/null
+    sleep 2
+    setsid "$0" < /dev/null >> "$LOG_DIR/run.log" 2>&1 &
+    exit 0
 fi
 
 # Window helper, runs as long as the app lives:
@@ -112,6 +134,7 @@ fi
         sleep 1
     done
     "$HOME/.local/bin/vibe-edge-fix" --watch > /dev/null 2>&1 &
+    ensure_tray
     while pgrep -f 'Vibe\.exe' > /dev/null 2>&1; do
         # Keep the previous main window while it lives and stays visible - so a
         # transient popup can't steal "main" and get the chat window hidden.
@@ -121,7 +144,7 @@ fi
         MAINFILE=/tmp/vibe-desktop-main.wid
         WID=$(cat "$MAINFILE" 2>/dev/null)
         if [ -n "$WID" ]; then
-            vis_list | grep -qx "$WID" || WID=""
+            managed_list | grep -qx "$WID" || WID=""
             if [ -n "$WID" ]; then
                 case "$(timeout 3 xdotool getwindowname "$WID" 2>/dev/null)" in
                     'Default IME'|'Input'|'Dictation'|'le-chat-desktop') WID="" ;;
