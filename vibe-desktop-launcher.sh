@@ -23,32 +23,22 @@ if [ ! -f "$WINEPREFIX/drive_c/users/$USER/AppData/Local/Programs/vibe/Vibe.exe"
     exit 1
 fi
 
-# largest app window (class steam_app_0), skipping only tiny helper windows
-# (IME/Input/Dictation are 1x1..166x45). Main window can have any/empty title.
-find_wid() {
-    BEST=""; BESTAREA=0
-    for w in $(xdotool search --class steam_app_0 2>/dev/null); do
-        g=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null)
-        wd=$(echo "$g" | awk -F= '/^WIDTH=/{print $2}')
-        ht=$(echo "$g" | awk -F= '/^HEIGHT=/{print $2}')
-        [ -n "$wd" ] && [ -n "$ht" ] || continue
-        [ "$wd" -lt 200 ] && continue
-        [ "$ht" -lt 150 ] && continue
-        area=$((wd * ht))
-        if [ "$area" -gt "$BESTAREA" ]; then BESTAREA=$area; BEST=$w; fi
-    done
-    echo "$BEST"
-}
+wgeo() { timeout 3 xdotool getwindowgeometry --shell "$1" 2>/dev/null; }
+vis_list() { timeout 5 xdotool search --onlyvisible --class steam_app_0 2>/dev/null; }
 
-# the real main window = largest app window that has a non-helper title;
-# fallback to largest overall. ('Current directory' can be the main window
-# title for a local-agent session, so it must NOT be excluded here.)
+# The real main (chat) window = largest VISIBLE app window whose title is not a
+# helper name. Helpers: 'Default IME'/'Input' (IME), 'Dictation' and
+# 'le-chat-desktop' (the splash window that becomes the Dictation window - it
+# is only ~0.4% smaller than the chat window, so area alone can't tell them
+# apart; the title is the discriminator). --onlyvisible so already-withdrawn
+# helpers are never candidates. Untitled windows are allowed (chat can be
+# untitled); at startup the splash then wins until the titled chat appears.
 find_main() {
     BEST=""; BESTAREA=0
-    for w in $(xdotool search --class steam_app_0 2>/dev/null); do
-        n=$(xdotool getwindowname "$w" 2>/dev/null)
-        case "$n" in ''|'Default IME'|'Input'|'Dictation'|'le-chat-desktop') continue;; esac
-        g=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null)
+    for w in $(vis_list); do
+        n=$(timeout 3 xdotool getwindowname "$w" 2>/dev/null)
+        case "$n" in 'Default IME'|'Input'|'Dictation'|'le-chat-desktop') continue;; esac
+        g=$(wgeo "$w")
         wd=$(echo "$g" | awk -F= '/^WIDTH=/{print $2}')
         ht=$(echo "$g" | awk -F= '/^HEIGHT=/{print $2}')
         [ -n "$wd" ] && [ -n "$ht" ] || continue
@@ -57,7 +47,6 @@ find_main() {
         area=$((wd * ht))
         if [ "$area" -gt "$BESTAREA" ]; then BESTAREA=$area; BEST=$w; fi
     done
-    [ -z "$BEST" ] && BEST=$(find_wid)
     echo "$BEST"
 }
 
@@ -122,40 +111,36 @@ fi
     done
     "$HOME/.local/bin/vibe-edge-fix" --watch > /dev/null 2>&1 &
     while pgrep -f 'Vibe\.exe' > /dev/null 2>&1; do
-        # Keep the previous main window while it lives - otherwise a full-size
-        # popup (file dialog) steals "main" and the chat window gets hidden.
-        # Switch only when a candidate is >20% larger (startup splash -> real
-        # chat window), so transient same-size popups never take over.
+        # Keep the previous main window while it lives and stays visible - so a
+        # transient popup can't steal "main" and get the chat window hidden.
+        # Switch only when a non-helper candidate is >20% larger (startup splash
+        # -> real chat window). The persisted id is dropped if it died, got
+        # withdrawn, shrank, or turned out to be a helper-titled window.
         MAINFILE=/tmp/vibe-desktop-main.wid
         WID=$(cat "$MAINFILE" 2>/dev/null)
-        wgeo() { timeout 3 xdotool getwindowgeometry --shell "$1" 2>/dev/null; }
         if [ -n "$WID" ]; then
-            g=$(wgeo "$WID")
-            wd=$(echo "$g" | awk -F= '/^WIDTH=/{print $2}')
-            ht=$(echo "$g" | awk -F= '/^HEIGHT=/{print $2}')
-            if [ -n "$wd" ] && [ "$wd" -ge 200 ] && [ "$ht" -ge 150 ]; then
-                # if the persisted window turned out to be a helper (the
-                # splash/dictation window is briefly titled 'le-chat-desktop'),
-                # drop it and recompute
+            vis_list | grep -qx "$WID" || WID=""
+            if [ -n "$WID" ]; then
                 case "$(timeout 3 xdotool getwindowname "$WID" 2>/dev/null)" in
                     'Default IME'|'Input'|'Dictation'|'le-chat-desktop') WID="" ;;
                 esac
-            else
-                WID=""
+            fi
+            if [ -n "$WID" ]; then
+                g=$(wgeo "$WID")
+                wd=$(echo "$g" | awk -F= '/^WIDTH=/{print $2}')
+                ht=$(echo "$g" | awk -F= '/^HEIGHT=/{print $2}')
+                { [ -n "$wd" ] && [ "$wd" -ge 200 ] && [ "$ht" -ge 150 ]; } || WID=""
             fi
             if [ -n "$WID" ]; then
                 CAND=$(find_main)
                 if [ -n "$CAND" ] && [ "$CAND" != "$WID" ]; then
-                    g2=$(wgeo "$CAND")
-                    wd2=$(echo "$g2" | awk -F= '/^WIDTH=/{print $2}')
-                    ht2=$(echo "$g2" | awk -F= '/^HEIGHT=/{print $2}')
+                    g=$(wgeo "$WID");  wd=$(echo "$g" | awk -F= '/^WIDTH=/{print $2}');  ht=$(echo "$g" | awk -F= '/^HEIGHT=/{print $2}')
+                    g2=$(wgeo "$CAND"); wd2=$(echo "$g2" | awk -F= '/^WIDTH=/{print $2}'); ht2=$(echo "$g2" | awk -F= '/^HEIGHT=/{print $2}')
                     if [ -n "$wd2" ] && [ -n "$ht2" ] && [ $((wd2 * ht2)) -gt $((wd * ht * 12 / 10)) ]; then
                         WID=$CAND
                         echo "$WID" > "$MAINFILE"
                     fi
                 fi
-            else
-                WID=""
             fi
         fi
         if [ -z "$WID" ]; then
@@ -190,16 +175,13 @@ fi
             set_skip_taskbar "$w" 1
             n=$(xdotool getwindowname "$w" 2>/dev/null)
             case "$n" in
-                Dictation)
-                    { [ "$wd" -ge 1900 ] && [ "$ht" -ge 1000 ]; } || continue  # resized overlay = in use
-                    wmctrl -i -r "$w" -b remove,above 2>/dev/null
-                    xdotool windowunmap "$w" 2>/dev/null
-                    ;;
-                *) case "$st" in
-                       *HIDDEN*) ;;
-                       *) xdotool windowminimize "$w" 2>/dev/null ;;
-                   esac ;;
+                Dictation) wmctrl -i -r "$w" -b remove,above 2>/dev/null ;;
             esac
+            # withdraw every idle helper (splash, idle Dictation) from the WM
+            # entirely: minimized windows still show up in GNOME alt-tab/overview
+            # and wmctrl; an unmapped window does not. The app can re-map on
+            # demand (dictation) and the watcher then leaves it alone (focused).
+            xdotool windowunmap "$w" 2>/dev/null
         done
         GEO=$(xdotool getwindowgeometry --shell "$WID" 2>/dev/null)
         X=$(echo "$GEO" | awk -F= '/^X=/    {print $2}')
