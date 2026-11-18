@@ -132,8 +132,11 @@ fi
         "$HOME/.local/bin/vibe-edge-fix" "$WID" >/dev/null 2>&1
         # hide helper/popup windows (everything but the main window): skip-taskbar
         # alone still leaves the full-size Dictation window in the overview, and
-        # its white right edge peeks out from behind the main window - so also
-        # minimize them (wmctrl -b add,hidden is ignored by mutter; use iconify)
+        # its white right edge peeks out from behind the main window. The
+        # Dictation window (voice-input overlay host) is ABOVE and kept mapped by
+        # the app, so windowminimize doesn't stick on it -> windowunmap instead
+        # (withdraws it from the WM: not in alt-tab/overview/screen; the app can
+        # still re-map it on demand when dictation is actually invoked).
         for w in $(xdotool search --class steam_app_0 2>/dev/null); do
             [ "$w" = "$WID" ] && continue
             g=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null)
@@ -143,9 +146,13 @@ fi
             [ "$wd" -lt 200 ] && continue
             [ "$ht" -lt 150 ] && continue
             set_skip_taskbar "$w" 1
-            case "$(xprop -id "$w" _NET_WM_STATE 2>/dev/null)" in
-                *HIDDEN*) ;;
-                *) xdotool windowminimize "$w" 2>/dev/null ;;
+            n=$(xdotool getwindowname "$w" 2>/dev/null)
+            case "$n" in
+                Dictation) xdotool windowunmap "$w" 2>/dev/null ;;
+                *) case "$(xprop -id "$w" _NET_WM_STATE 2>/dev/null)" in
+                       *HIDDEN*) ;;
+                       *) xdotool windowminimize "$w" 2>/dev/null ;;
+                   esac ;;
             esac
         done
         GEO=$(xdotool getwindowgeometry --shell "$WID" 2>/dev/null)
