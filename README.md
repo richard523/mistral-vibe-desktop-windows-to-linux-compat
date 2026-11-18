@@ -1,7 +1,7 @@
-# Mistral Vibe Desktop on Linux (CachyOS / GNOME Wayland) — full runbook
+# mistral-vibe-desktop-windows-to-linux-compat — run the Windows build of Mistral Vibe Desktop on Linux (CachyOS / GNOME Wayland)
 
-How the official Windows-only Vibe Desktop 1.1.0 was made to run well on this
-machine: Proton (GE-Proton) via umu-run, hardware-accelerated, with all the
+Full runbook for the official Windows-only Vibe Desktop 1.1.0 on Linux:
+Proton (GE-Proton) via umu-run, hardware-accelerated, with all the
 window/chrome quirks fixed. Everything is user-local; nothing system-wide.
 
 Machine context: CachyOS (Arch-based), GNOME on Wayland + XWayland, dual
