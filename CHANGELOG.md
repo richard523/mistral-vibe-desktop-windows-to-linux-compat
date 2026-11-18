@@ -10,7 +10,7 @@ Reference machine: GNOME **Wayland** session with XWayland, Intel Iris Xe,
 
 ---
 
-## (pending) - Git for Windows installed inside the prefix (the app had no git)
+## 467e5dc - Git for Windows installed inside the prefix (the app had no git)
 
 User request: "install git in this proton". The app's coding features call
 `git`, and wine's `CreateProcess` only starts PE binaries, so the Linux git on
