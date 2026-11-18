@@ -8,6 +8,9 @@ Machine context: CachyOS (Arch-based), GNOME on Wayland + XWayland, dual
 1920x1080 monitors (eDP-1 at +0+0, DP-6 primary at +1920+0), i7-12700H,
 Iris Xe + RTX 3070 Ti, 16 GB RAM with aggressive zram tuning.
 
+Every change made along the way, with the numbers behind it, is in
+[`CHANGELOG.md`](CHANGELOG.md).
+
 ## 0. What the app is
 
 - Vibe Desktop 1.1.0 is the official **proprietary** Mistral desktop app
@@ -257,6 +260,7 @@ Implications / mitigations (implemented):
 | `mistral-vibe-desktop.desktop` | app entry (install.sh rewrites the Exec path to $HOME) |
 | `autostart-mistral-vibe-desktop.desktop` | XDG autostart for the app (boot at login) |
 | `tools/` | verification harness used during development (boot timing, window enum, edge scan, cold-launch repro, and `test-dock-restore.sh` — asserts dock-click restore + close-to-tray still works after it) — dev-only, not needed to run the app |
+| `CHANGELOG.md` | every change made while getting this to work, newest first, with the measured numbers |
 | `LICENSE` | MIT for the scripts/docs here; the Vibe Desktop app itself is proprietary and NOT distributed in this repo |
 
 ## 11. Remaining caveats (complete list)
