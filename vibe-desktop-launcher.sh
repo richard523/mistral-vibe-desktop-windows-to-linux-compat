@@ -83,9 +83,7 @@ show_wid() {
 }
 
 
-# Already running? Ensure daemons, then either re-show the window (fast path)
-# or, if it was closed to tray (windowless), trigger the second-instance handoff
-# in the background and return - a tray click must never hang.
+# Already running? Ensure daemons, then bring the existing window back.
 if pgrep -f 'Vibe\.exe' > /dev/null 2>&1; then
     pgrep -f 'vibe-edge-fix --watc[h]' > /dev/null 2>&1 || "$HOME/.local/bin/vibe-edge-fix" --watch > /dev/null 2>&1 &
     WID=$(find_main)
@@ -93,12 +91,44 @@ if pgrep -f 'Vibe\.exe' > /dev/null 2>&1; then
         show_wid "$WID" 1
         exit 0
     fi
-    # app running but windowless (closed to tray): the app DESTROYS its X
-    # window on close (verified: BadWindow afterwards) and the Electron
-    # second-instance handoff does not recreate it under wine (measured), so
-    # kill + re-exec ourselves in the background -> full cold-start path
-    # (watcher + edge-fix + umu-run). The click returns immediately; the window
-    # is back after one cold boot (~15s) - tell the user it's happening.
+    # App running but no managed window = closed to tray. The window is HIDDEN,
+    # not destroyed: the X window survives unmapped, geometry and title intact -
+    # the app only called hide() on it. (An XDestroyWindow-based test such as
+    # `xdotool windowclose` fakes destruction and gave a wrong answer here.)
+    #
+    # Ask the RUNNING process to show it again: launching a second instance makes
+    # Electron's single-instance lock hand off to the primary, whose
+    # second-instance handler shows the existing window. Measured 2.2s to a
+    # mapped window vs ~15s for a cold boot, and no state damage.
+    #
+    # Do NOT simplify this to `xdotool windowmap <hidden-id>`: an out-of-band
+    # XMapWindow restores the pixels in ~0.3s but leaves Chromium's own
+    # visibility flag false, after which the app's close handler (hide) becomes
+    # a no-op - close-to-tray silently stops working until the app restarts
+    # (verified by experiment: WM_DELETE_WINDOW is delivered and ignored).
+    WIN_EXE="$WINEPREFIX/drive_c/users/$USER/AppData/Local/Programs/vibe/Vibe.exe"
+    # Boot guard: a young app has no window yet (cold start ~12-15s) and setting
+    # up a tray hide needs the window to have appeared, so a young windowless app
+    # is starting up, not closed to tray - do nothing (never kill a booting app).
+    APP_AGE=$(ps -o etimes= -p "$(pgrep -o -f 'Vibe\.exe' 2>/dev/null)" 2>/dev/null | tr -d ' ')
+    if [ -n "$APP_AGE" ] && [ "$APP_AGE" -lt 30 ]; then
+        exit 0
+    fi
+    if [ -x "$GEWINE" ] && [ -f "$WIN_EXE" ]; then
+        setsid timeout 30 "$GEWINE" "$WIN_EXE" < /dev/null >> "$LOG_DIR/run.log" 2>&1 &
+        n=0
+        while [ "$n" -lt 32 ]; do          # <= 8s, the handoff needs ~2.2s
+            n=$((n + 1))
+            sleep 0.25
+            WID=$(find_main)
+            if [ -n "$WID" ]; then
+                show_wid "$WID" 1
+                exit 0
+            fi
+        done
+    fi
+    # Last resort (handoff failed: wedged app): kill and cold start, in the
+    # background so the click itself never hangs.
     command -v notify-send >/dev/null 2>&1 && notify-send -i mistral-vibe-desktop "Mistral Vibe" "Restoring window (cold start ~15s)..." 2>/dev/null
     pkill -f 'Vibe\.exe' 2>/dev/null
     sleep 1
@@ -109,8 +139,10 @@ if pgrep -f 'Vibe\.exe' > /dev/null 2>&1; then
 fi
 
 # Window helper, runs as long as the app lives:
-#  1) re-show the main window if it ever ends up unmapped (close-to-tray then
-#     relaunch paths can leave it hidden under proton);
+#  1) tracks the real chat window (largest managed app window, helper titles
+#     excluded) and never shows it: close-to-tray must stick, restore happens
+#     only on an explicit click (dock icon -> second-instance handoff, or the
+#     app's own tray icon);
 #  2) edge-fix daemon (C binary, 200ms poll): sets the X background pixel of
 #     every app window to the app's dark #17171B. This kills the white
 #     right/bottom bars at creation: Electron reserves a 4px resize frame

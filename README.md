@@ -195,8 +195,9 @@ Implications / mitigations (implemented):
   gpu ~70% CPU during the gap - measured per-process). `WINEDEBUG=-all` +
   `nice -n -5` (now in the launcher) do NOT measurably help (16-17 s before and
   after); the cost is inherent to Electron+bytenode on this stack.
-- What does work: once running, the launcher's already-running path shows the
-  window in ~0.3 s (measured 285 ms). So keep the app alive (close-to-tray)
+- What does work: once running, the launcher never cold-boots. Window up ->
+  activate in ~54 ms; closed to tray -> the second-instance handoff re-shows it
+  in ~3.3 s (window mapped at ~2.2 s). So keep the app alive (close-to-tray)
   instead of quitting it.
 - Autostart at login: `autostart-mistral-vibe-desktop.desktop` (XDG autostart,
   also installed to ~/.config/autostart/) starts Vibe during login, so the
@@ -207,19 +208,44 @@ Implications / mitigations (implemented):
 ## 10. Tray icon & close-to-tray
 
 - The app's OWN tray icon is kept (`showTrayIconEnabled: true` in the app's
-  config.json; install.sh sets this). Under wine it is surfaced through wine's
-  StatusNotifier registration when available; there is deliberately NO custom
-- Close-to-tray now sticks: the watcher no longer re-shows/un-minimizes the
-  main window (that was the "minimizes then comes back to fullscreen" bug —
-  verified fixed: window stays hidden 10s+ after close). Restore happens only
-  on explicit action: clicking the app's tray icon (app re-shows its window in
-  the same process), or the dock icon / `vibe-desktop` launcher.
-- Launcher restore paths (measured): window present (even minimized) ->
-  `wmctrl -i -a` in ~50-90 ms; windowless (real close destroys the X window
-  under wine — BadWindow afterwards — and the second-instance handoff does not
-  recreate it) -> background cold relaunch, click returns in ~4 s, window back
-  after ~15 s, with a "Restoring window..." notification.
-- Launcher also pops that notification on the windowless path.
+  config.json; install.sh sets this). It is a wine/explorer systray icon: a
+  14x14 X window docked into the top bar (class `steam_app_0`,
+  `_XEMBED_INFO` set, owned by the prefix's `explorer.exe`). It is NOT a
+  StatusNotifier item — `RegisteredStatusNotifierItems` never contains a
+  wine/Vibe entry, so a custom SNI tray daemon would only duplicate it. The
+  old `vibe-tray.py` was removed for that reason.
+- Clicking that icon re-shows the window inside the same process. It cannot be
+  driven programmatically: synthetic clicks (`XSendEvent`, `xdotool click
+  --window`) are ignored by wine, and pointer warps are a no-op on Wayland, so
+  a real click cannot be faked (both tested).
+- Close-to-tray sticks: the watcher never re-shows or un-minimizes the main
+  window (that was the "minimizes then comes back to fullscreen" bug —
+  verified fixed: window stays hidden after close).
+- What "close" actually does: the app calls `hide()`. The X window is HIDDEN,
+  not destroyed — it stays alive unmapped with geometry and title intact, and
+  the process set stays up. Beware the misleading test: `xdotool windowclose`
+  is `XDestroyWindow`, which fakes destruction (`BadWindow` afterwards) and
+  produced a wrong conclusion here for a while. A real WM close
+  (`wmctrl -i -c <wid>`, i.e. what the titlebar X does) leaves the window
+  recoverable.
+- Dock icon / `vibe-desktop` restore paths (measured on the reference machine):
+
+  | state | path | result |
+  |---|---|---|
+  | window up | `find_main` + `wmctrl -i -a` | ~54 ms, activate |
+  | closed to tray (unmapped) | second instance -> `second-instance` handoff -> app shows its own window | launcher returns in ~3.3 s, window mapped at ~2.2 s |
+
+  The handoff costs one Electron process boot (~2 s) but no state damage: the
+  window keeps its id, and close-to-tray still works afterwards (re-verified).
+- Do NOT "optimise" that into `xdotool windowmap <hidden-id>`. It looks perfect
+  (window back in ~0.3 s) but the map is out of band: Chromium's visibility
+  flag stays false, so the app's next close (hide) becomes a no-op and
+  close-to-tray silently dies until the app restarts. Verified by experiment
+  (WM_DELETE_WINDOW delivered and ignored; a manual unmap/re-map does not heal
+  it).
+- Kill + cold relaunch (~15 s) remains only as a last-resort fallback if the
+  handoff produces no window in 8 s (wedged app); it is the only path that pops
+  a "Restoring window..." notification.
 
 ## 8. Files in this repo
 
@@ -230,7 +256,7 @@ Implications / mitigations (implemented):
 | `vibe-edge-fix.c` | white-edge fixer, compiled to `~/.local/bin/vibe-edge-fix` (`cc -O2 -lX11`) |
 | `mistral-vibe-desktop.desktop` | app entry (install.sh rewrites the Exec path to $HOME) |
 | `autostart-mistral-vibe-desktop.desktop` | XDG autostart for the app (boot at login) |
-| `tools/` | verification harness used during development (boot timing, window enum, edge scan, cold-launch repro, tray-restore test) — dev-only, not needed to run the app |
+| `tools/` | verification harness used during development (boot timing, window enum, edge scan, cold-launch repro, and `test-dock-restore.sh` — asserts dock-click restore + close-to-tray still works after it) — dev-only, not needed to run the app |
 | `LICENSE` | MIT for the scripts/docs here; the Vibe Desktop app itself is proprietary and NOT distributed in this repo |
 
 ## 11. Remaining caveats (complete list)
@@ -242,11 +268,15 @@ Implications / mitigations (implemented):
 - Local-session stack = Windows helper binaries under Proton
   (agent-browser.exe, rg.exe, key-server.exe, windows-files.node) — untested;
   remote/web sessions work (verified: signed in, sessions listed).
-- Close button hides to tray = windowless; restoring from the tray icon does a
-  full background relaunch (~15 s cold boot). The app's own `openAtLogin`
+- Close button hides to tray: the window survives unmapped and comes back via
+  the second-instance handoff in ~3 s (see §10). The app's own `openAtLogin`
   config is a no-op under wine (writes a Windows Run key) — use the XDG
   autostart entry instead.
-  tray icon never reaches GNOME.
+- The handoff briefly spawns a second `Vibe.exe` (window appears at ~2.2 s, the
+  process itself exits after ~8 s, hard-capped by `timeout 30`), so the process
+  count ticks up for a few seconds. A dock click during a cold start (app
+  younger than 30 s) is a deliberate no-op, so double-clicking the icon can
+  never kill an app that is still booting.
 - Dictation: the Dictation overlay window is withdrawn while idle and left
   alone while focused, so voice input works; if it ever misbehaves, delete the
   `windowunmap` line for `Dictation` in the launcher.
