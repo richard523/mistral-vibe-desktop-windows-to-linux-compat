@@ -13,6 +13,8 @@
 export WINEPREFIX="$HOME/.local/share/wineprefixes/vibe-desktop"
 export GAMEID=0
 export PROTONPATH="$HOME/.local/share/Steam/compatibilitytools.d/Proton-GE Latest"
+# boot is CPU-bound app init under wine; less logging I/O + higher priority
+export WINEDEBUG=-all
 
 WIN_APP='C:\users\'"$USER"'\AppData\Local\Programs\vibe\Vibe.exe'
 LOG_DIR="$HOME/.local/state/vibe-desktop"
@@ -197,4 +199,4 @@ fi
     done
 ) 9>/tmp/vibe-desktop-watcher.lock &
 
-exec setsid umu-run "$WIN_APP" < /dev/null >> "$LOG_DIR/run.log" 2>&1
+exec setsid nice -n -5 umu-run "$WIN_APP" < /dev/null >> "$LOG_DIR/run.log" 2>&1

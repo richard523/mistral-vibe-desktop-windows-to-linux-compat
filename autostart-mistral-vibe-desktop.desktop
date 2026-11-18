@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Mistral Vibe Desktop
+Comment=Official Mistral Vibe Desktop (via GE-Proton)
+Exec=/home/chardlinux/.local/bin/vibe-desktop
+Icon=mistral-vibe-desktop
+Terminal=false
+X-GNOME-Autostart-enabled=true

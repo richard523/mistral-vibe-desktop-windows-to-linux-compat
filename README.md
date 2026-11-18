@@ -190,13 +190,19 @@ fallback (no keyring in the prefix), and a 5 s `TimeoutError` in the
 transfer-rule chunk.
 
 Implications / mitigations (implemented):
-- The expensive part is one-time per cold start; once running, the launcher's
-  already-running path shows the window in well under a second. So keep the app
-  alive (close-to-tray) instead of quitting it.
-- Autostart at login (XDG .desktop in ~/.config/autostart) so the ~14 s cold
-  boot happens during login, not when the user clicks the icon.
-- `WINEDEBUG=-all` and `nice -n -5` in the launcher cut logging overhead and
-  give the CPU-bound init priority.
+- The expensive part is one-time per cold start and is the app's own
+  multi-process JS init under wine (main ~300%, renderer ~150%, utility ~80%,
+  gpu ~70% CPU during the gap - measured per-process). `WINEDEBUG=-all` +
+  `nice -n -5` (now in the launcher) do NOT measurably help (16-17 s before and
+  after); the cost is inherent to Electron+bytenode on this stack.
+- What does work: once running, the launcher's already-running path shows the
+  window in ~0.3 s (measured 285 ms). So keep the app alive (close-to-tray)
+  instead of quitting it.
+- Autostart at login: `autostart-mistral-vibe-desktop.desktop` (XDG autostart,
+  also installed to ~/.config/autostart/) starts Vibe during login, so the
+  ~15 s cold boot is paid while logging in, not when clicking the dock icon.
+  (The app's own `openAtLogin` config writes a Windows Run key, which does
+  nothing under wine - hence the XDG entry.)
 
 ## 8. Remaining caveats
 
