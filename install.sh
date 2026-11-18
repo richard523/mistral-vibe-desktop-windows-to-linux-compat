@@ -48,5 +48,20 @@ echo "== dark wine palette (wine-drawn bevels + file dialogs)"
 WINEPREFIX="$PREFIX" "$GE/files/bin/wine" reg add 'HKCU\Control Panel\Colors' /v ActiveBorder /d '48 48 54' /f >/dev/null 2>&1 || true
 # (full palette used on the reference machine is in README.md section 4)
 
+echo "== app config: disable the app's own tray icon (it never reaches GNOME under
+#    wine; we provide our own via vibe-tray.py)"
+CFGDIR="$PREFIX/drive_c/users/$USER/AppData/Roaming/le-chat-desktop"
+mkdir -p "$CFGDIR"
+python3 - "$CFGDIR/config.json" <<'EOF'
+import json, os, sys
+p = sys.argv[1]
+c = {}
+if os.path.exists(p):
+    try: c = json.load(open(p))
+    except Exception: pass
+c["showTrayIconEnabled"] = False
+json.dump(c, open(p, "w"), indent="\t")
+EOF
+
 echo "== done. Launch with:  vibe-desktop   (or the 'Mistral Vibe Desktop' app icon)"
 echo "   Proton layer: $GE"

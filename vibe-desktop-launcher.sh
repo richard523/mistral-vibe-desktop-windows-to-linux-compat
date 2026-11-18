@@ -99,11 +99,13 @@ if pgrep -f 'Vibe\.exe' > /dev/null 2>&1; then
         show_wid "$WID" 1
         exit 0
     fi
-    # app running but windowless (closed to tray): the Electron second-instance
-    # handoff does NOT reliably recreate the window under wine (measured), so
-    # kill it and re-exec ourselves in the background -> full cold-start path
-    # (watcher + edge-fix + umu-run). The tray click returns immediately; the
-    # window is back after one cold boot (~15s).
+    # app running but windowless (closed to tray): the app DESTROYS its X
+    # window on close (verified: BadWindow afterwards) and the Electron
+    # second-instance handoff does not recreate it under wine (measured), so
+    # kill + re-exec ourselves in the background -> full cold-start path
+    # (watcher + edge-fix + umu-run). The click returns immediately; the window
+    # is back after one cold boot (~15s) - tell the user it's happening.
+    command -v notify-send >/dev/null 2>&1 && notify-send -i mistral-vibe-desktop "Mistral Vibe" "Restoring window (cold start ~15s)..." 2>/dev/null
     pkill -f 'Vibe\.exe' 2>/dev/null
     sleep 1
     WINEPREFIX="$WINEPREFIX" "$GEWINE" wineserver -k 2>/dev/null

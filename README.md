@@ -223,6 +223,14 @@ is installed and shows it in the top bar) provides the icon instead:
 - Icon dims (PASSIVE) while the app isn't running; clicking still launches it.
 - Started by the launcher (`ensure_tray`) and via XDG autostart
   (`vibe-tray.desktop` in ~/.config/autostart).
+- Close-vs-minimize caveat (measured): the app DESTROYS its X window on close
+  (close-to-tray; the id is gone afterwards — BadWindow), and the Electron
+  second-instance handoff does not recreate it under wine, so restoring after a
+  real close is necessarily a background cold relaunch (~15 s; the launcher
+  pops a "Restoring window..." notification). Using the window's MINIMIZE
+  button instead keeps the window managed (HIDDEN) and the tray click restores
+  it in ~50-90 ms. The app's own `showTrayIconEnabled` is set to false
+  (install.sh does this) since its Windows tray icon never reaches GNOME.
 
 ## 8. Files in this repo
 
