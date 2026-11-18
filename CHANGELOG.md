@@ -10,7 +10,7 @@ Reference machine: GNOME **Wayland** session with XWayland, Intel Iris Xe,
 
 ---
 
-## 4e5892d - Typing latency in the input box: the app was living in zram, in someone else's cgroup
+## 33df8fb - Typing latency in the input box: the app was living in zram, in someone else's cgroup
 
 User report: "there's a bit of latency when typing into the input box." Not an
 Electron problem - a cgroup inheritance problem.
