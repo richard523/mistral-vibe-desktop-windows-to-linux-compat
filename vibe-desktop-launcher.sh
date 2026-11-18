@@ -41,7 +41,8 @@ find_wid() {
 }
 
 # the real main window = largest app window that has a non-helper title;
-# fallback to largest overall
+# fallback to largest overall. ('Current directory' can be the main window
+# title for a local-agent session, so it must NOT be excluded here.)
 find_main() {
     BEST=""; BESTAREA=0
     for w in $(xdotool search --class steam_app_0 2>/dev/null); do
@@ -121,7 +122,36 @@ fi
     done
     "$HOME/.local/bin/vibe-edge-fix" --watch > /dev/null 2>&1 &
     while pgrep -f 'Vibe\.exe' > /dev/null 2>&1; do
-        WID=$(find_main)
+        # Keep the previous main window while it lives - otherwise a full-size
+        # popup (file dialog) steals "main" and the chat window gets hidden.
+        # Switch only when a candidate is >20% larger (startup splash -> real
+        # chat window), so transient same-size popups never take over.
+        MAINFILE=/tmp/vibe-desktop-main.wid
+        WID=$(cat "$MAINFILE" 2>/dev/null)
+        wgeo() { timeout 3 xdotool getwindowgeometry --shell "$1" 2>/dev/null; }
+        if [ -n "$WID" ]; then
+            g=$(wgeo "$WID")
+            wd=$(echo "$g" | awk -F= '/^WIDTH=/{print $2}')
+            ht=$(echo "$g" | awk -F= '/^HEIGHT=/{print $2}')
+            if [ -n "$wd" ] && [ "$wd" -ge 200 ] && [ "$ht" -ge 150 ]; then
+                CAND=$(find_main)
+                if [ -n "$CAND" ] && [ "$CAND" != "$WID" ]; then
+                    g2=$(wgeo "$CAND")
+                    wd2=$(echo "$g2" | awk -F= '/^WIDTH=/{print $2}')
+                    ht2=$(echo "$g2" | awk -F= '/^HEIGHT=/{print $2}')
+                    if [ -n "$wd2" ] && [ -n "$ht2" ] && [ $((wd2 * ht2)) -gt $((wd * ht * 12 / 10)) ]; then
+                        WID=$CAND
+                        echo "$WID" > "$MAINFILE"
+                    fi
+                fi
+            else
+                WID=""
+            fi
+        fi
+        if [ -z "$WID" ]; then
+            WID=$(find_main)
+            [ -n "$WID" ] && echo "$WID" > "$MAINFILE"
+        fi
         [ -z "$WID" ] && { sleep 1; continue; }
         set_skip_taskbar "$WID" 0
         # un-minimize the main window if it ever got hidden (close-to-tray etc.)
@@ -130,13 +160,13 @@ fi
             *) show_wid "$WID" 0 ;;
         esac
         "$HOME/.local/bin/vibe-edge-fix" "$WID" >/dev/null 2>&1
-        # hide helper/popup windows (everything but the main window): skip-taskbar
-        # alone still leaves the full-size Dictation window in the overview, and
-        # its white right edge peeks out from behind the main window. The
-        # Dictation window (voice-input overlay host) is ABOVE and kept mapped by
-        # the app, so windowminimize doesn't stick on it -> windowunmap instead
-        # (withdraws it from the WM: not in alt-tab/overview/screen; the app can
-        # still re-map it on demand when dictation is actually invoked).
+        # hide helper/popup windows (everything but the main window), but never
+        # touch a FOCUSED window - that's an active popup (file dialog, or the
+        # Dictation overlay during a dictation session) the user is looking at.
+        # Idle Dictation (full-size, unfocused, behind main) gets windowunmap:
+        # withdrawn from the WM (no alt-tab/overview/screen presence) while the
+        # app can still re-map+focus it when dictation starts. Other helpers
+        # (the splash) get minimized (mutter ignores wmctrl -b add,hidden).
         for w in $(xdotool search --class steam_app_0 2>/dev/null); do
             [ "$w" = "$WID" ] && continue
             g=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null)
@@ -145,11 +175,17 @@ fi
             [ -n "$wd" ] && [ -n "$ht" ] || continue
             [ "$wd" -lt 200 ] && continue
             [ "$ht" -lt 150 ] && continue
+            st=$(xprop -id "$w" _NET_WM_STATE 2>/dev/null)
+            case "$st" in *FOCUSED*) continue ;; esac   # active popup: leave it alone
             set_skip_taskbar "$w" 1
             n=$(xdotool getwindowname "$w" 2>/dev/null)
             case "$n" in
-                Dictation) xdotool windowunmap "$w" 2>/dev/null ;;
-                *) case "$(xprop -id "$w" _NET_WM_STATE 2>/dev/null)" in
+                Dictation)
+                    { [ "$wd" -ge 1900 ] && [ "$ht" -ge 1000 ]; } || continue  # resized overlay = in use
+                    wmctrl -i -r "$w" -b remove,above 2>/dev/null
+                    xdotool windowunmap "$w" 2>/dev/null
+                    ;;
+                *) case "$st" in
                        *HIDDEN*) ;;
                        *) xdotool windowminimize "$w" 2>/dev/null ;;
                    esac ;;
