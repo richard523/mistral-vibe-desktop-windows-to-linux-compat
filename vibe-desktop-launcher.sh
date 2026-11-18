@@ -47,7 +47,7 @@ find_main() {
     BEST=""; BESTAREA=0
     for w in $(xdotool search --class steam_app_0 2>/dev/null); do
         n=$(xdotool getwindowname "$w" 2>/dev/null)
-        case "$n" in ''|'Default IME'|'Input'|'Dictation') continue;; esac
+        case "$n" in ''|'Default IME'|'Input'|'Dictation'|'le-chat-desktop') continue;; esac
         g=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null)
         wd=$(echo "$g" | awk -F= '/^WIDTH=/{print $2}')
         ht=$(echo "$g" | awk -F= '/^HEIGHT=/{print $2}')
@@ -134,6 +134,16 @@ fi
             wd=$(echo "$g" | awk -F= '/^WIDTH=/{print $2}')
             ht=$(echo "$g" | awk -F= '/^HEIGHT=/{print $2}')
             if [ -n "$wd" ] && [ "$wd" -ge 200 ] && [ "$ht" -ge 150 ]; then
+                # if the persisted window turned out to be a helper (the
+                # splash/dictation window is briefly titled 'le-chat-desktop'),
+                # drop it and recompute
+                case "$(timeout 3 xdotool getwindowname "$WID" 2>/dev/null)" in
+                    'Default IME'|'Input'|'Dictation'|'le-chat-desktop') WID="" ;;
+                esac
+            else
+                WID=""
+            fi
+            if [ -n "$WID" ]; then
                 CAND=$(find_main)
                 if [ -n "$CAND" ] && [ "$CAND" != "$WID" ]; then
                     g2=$(wgeo "$CAND")
