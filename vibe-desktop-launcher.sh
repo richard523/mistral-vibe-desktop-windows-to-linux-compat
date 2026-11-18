@@ -122,11 +122,18 @@ fi
     "$HOME/.local/bin/vibe-edge-fix" --watch > /dev/null 2>&1 &
     while pgrep -f 'Vibe\.exe' > /dev/null 2>&1; do
         WID=$(find_main)
-        [ -z "$WID" ] && { sleep 2; continue; }
-        show_wid "$WID" 0
+        [ -z "$WID" ] && { sleep 1; continue; }
         set_skip_taskbar "$WID" 0
+        # un-minimize the main window if it ever got hidden (close-to-tray etc.)
+        case "$(xprop -id "$WID" _NET_WM_STATE 2>/dev/null)" in
+            *HIDDEN*) wmctrl -i -a "$WID" 2>/dev/null ;;
+            *) show_wid "$WID" 0 ;;
+        esac
         "$HOME/.local/bin/vibe-edge-fix" "$WID" >/dev/null 2>&1
-        # hide helper/popup windows (everything but the main window) from alt-tab
+        # hide helper/popup windows (everything but the main window): skip-taskbar
+        # alone still leaves the full-size Dictation window in the overview, and
+        # its white right edge peeks out from behind the main window - so also
+        # minimize them (wmctrl -b add,hidden is ignored by mutter; use iconify)
         for w in $(xdotool search --class steam_app_0 2>/dev/null); do
             [ "$w" = "$WID" ] && continue
             g=$(xdotool getwindowgeometry --shell "$w" 2>/dev/null)
@@ -136,6 +143,10 @@ fi
             [ "$wd" -lt 200 ] && continue
             [ "$ht" -lt 150 ] && continue
             set_skip_taskbar "$w" 1
+            case "$(xprop -id "$w" _NET_WM_STATE 2>/dev/null)" in
+                *HIDDEN*) ;;
+                *) xdotool windowminimize "$w" 2>/dev/null ;;
+            esac
         done
         GEO=$(xdotool getwindowgeometry --shell "$WID" 2>/dev/null)
         X=$(echo "$GEO" | awk -F= '/^X=/    {print $2}')

@@ -69,15 +69,20 @@ Files installed:
 1. If the app is already running with a window: just map+focus it (relaunch =
    show). If running windowless (close-to-tray destroyed the X window), launch
    again so the app recreates its window.
-2. One watcher loop (flock-guarded) while the app lives:
-   - re-shows the main window if unmapped (proton sometimes leaves it unmapped)
+2. One watcher loop (flock-guarded; waits up to 180 s for Vibe.exe to appear —
+   without that wait a cold launch killed it at t=0 and nothing was fixed all
+   session, the "by default still broken" bug) while the app lives:
+   - re-shows/un-minimizes the main window if hidden (close-to-tray relaunch)
    - re-applies the edge fix to the main window
    - marks every non-main app window `_NET_WM_STATE_SKIP_TASKBAR,SKIP_PAGER`
-     so alt-tab shows exactly one Vibe window (helpers: `Default IME`, `Input`,
-     `Dictation`, unnamed popups)
+     **and minimizes it** (`xdotool windowminimize`; mutter ignores
+     `wmctrl -b add,hidden`) so alt-tab AND the overview show exactly one Vibe
+     window — the full-size Dictation helper no longer spawns as a visible
+     second window behind the main one
    - snaps near-fullscreen windows to (1920,29,1928x1023)
-3. `vibe-edge-fix --watch` daemon (200 ms poll) sets the X background pixel of
-   every `steam_app_0` window to the app's dark `#17171B`.
+3. `vibe-edge-fix --watch` daemon (200 ms poll over the whole window tree,
+   depth 3) darkens every `steam_app_0` window's background/border and paints
+   its 8 px edge strips dark.
 
 ## 4. The white-bar saga (root-caused)
 
@@ -90,16 +95,19 @@ its edge is on-screen — worst when maximized (exactly monitor-sized).
   `HKCU\Control Panel\Colors` exactly. Fix: set the whole palette dark in the
   prefix (via GE's `files/bin/wine reg add ...`; verify with `reg query` —
   `user.reg` on disk lags because wine caches in the live wineserver).
-- Layer 2 (the real one): Chromium reserves a 4 px resize frame painted white
-  inside its GPU surface; XWayland composites that uncovered edge from the X
-  window's **background pixel**, which wine sets to WhitePixel at creation
-  (Chromium's window class has hbrBackground=NULL). NOT reachable via
-  registry colors, wine border metrics (wine clamps SM_CXSIZEFRAME >= 1),
-  or Chromium's `--default-background-color` flag (all tested). Fix:
-  `XSetWindowBackground(0x1B1B17)` per window — an X window attribute, so it
-  applies at creation/composite time with no repaint race and covers every
-  window state (normal, maximized, recreated on toggles). That's what
-  `vibe-edge-fix` does.
+- Layer 2 (the real one): Chromium reserves a 4 px resize frame it does not paint;
+  XWayland composites that uncovered edge from the X window's **background pixel**,
+  which wine sets to WhitePixel at creation (Chromium's window class has
+  hbrBackground=NULL). NOT reachable via registry colors, wine border metrics
+  (wine clamps SM_CXSIZEFRAME >= 1), or Chromium's `--default-background-color`
+  flag (all tested). Worse: full-size helper windows (the "Dictation" window,
+  1920x1019 flush at the monitor's right edge) peek out from behind the main
+  window with their white edge. Fix (`vibe-edge-fix`, C/Xlib, recursive tree walk,
+  200 ms poll): on every `steam_app_0` window set background-pixmap None +
+  background/border pixel dark (so future exposes repaint dark) AND directly
+  `XFillRectangle` the 8 px edge strips dark — changing the bg of a viewable
+  window does not repaint it by itself, and `XClearArea`+expose makes Chromium
+  repaint the frame white again (measured), so we paint over the strips instead.
 - The app also saves poisoned window bounds (`mainWindowBounds: {x:-4,...}`,
   the Windows DWM off-screen-border trick) in
   `Roaming/le-chat-desktop/config.json`; mutter draws the overhang literally.
