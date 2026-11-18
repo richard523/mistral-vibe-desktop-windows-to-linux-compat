@@ -224,17 +224,66 @@ is installed and shows it in the top bar) provides the icon instead:
 - Started by the launcher (`ensure_tray`) and via XDG autostart
   (`vibe-tray.desktop` in ~/.config/autostart).
 
-## 8. Remaining caveats
+## 8. Files in this repo
+
+| file | purpose |
+|---|---|
+| `install.sh` | one-shot installer: extracts app-64.7z into the prefix, installs scripts, compiles edge-fix, installs .desktop/autostart entries |
+| `vibe-desktop-launcher.sh` | the launcher (installed to `~/.local/bin/vibe-desktop`) |
+| `vibe-edge-fix.c` | white-edge fixer, compiled to `~/.local/bin/vibe-edge-fix` (`cc -O2 -lX11`) |
+| `vibe-tray.py` | GNOME top-bar tray icon daemon (AppIndicator) |
+| `mistral-vibe-desktop.desktop` | app entry (install.sh rewrites the Exec path to $HOME) |
+| `autostart-mistral-vibe-desktop.desktop` | XDG autostart for the app (boot at login) |
+| `vibe-tray-autostart.desktop` | XDG autostart for the tray icon |
+| `tools/` | verification harness used during development (boot timing, window enum, edge scan, cold-launch repro, tray-restore test) — dev-only, not needed to run the app |
+| `LICENSE` | MIT for the scripts/docs here; the Vibe Desktop app itself is proprietary and NOT distributed in this repo |
+
+## 11. Remaining caveats (complete list)
 
 - Auto-update can't self-apply (would re-run the NSIS installer under wine,
-  which fails). Update = download new setup.exe in Firefox, re-extract
-  `app-64.7z` over `Programs/vibe`.
+  which fails). Update = download new setup.exe in a browser, re-run
+  `install.sh /path/to/vibe-X.Y.Z-setup.exe` (or re-extract `app-64.7z` over
+  `Programs/vibe`).
 - Local-session stack = Windows helper binaries under Proton
   (agent-browser.exe, rg.exe, key-server.exe, windows-files.node) — untested;
   remote/web sessions work (verified: signed in, sessions listed).
-- Close button hides to tray (app behavior; its tray icon is not a standard
-  SNI, so relaunch goes through the launcher/dock icon, which now re-shows the
-  window).
+- Close button hides to tray = windowless; restoring from the tray icon does a
+  full background relaunch (~15 s cold boot). The app's own `openAtLogin`
+  config is a no-op under wine (writes a Windows Run key) — use the XDG
+  autostart entry instead.
+- The tray icon in the top bar is ours (`vibe-tray.py`); the app's own Windows
+  tray icon never reaches GNOME.
+- Dictation: the Dictation overlay window is withdrawn while idle and left
+  alone while focused, so voice input works; if it ever misbehaves, delete the
+  `windowunmap` line for `Dictation` in the launcher.
 - One transient frozen-splash launch seen in ~5; relaunch clears it.
-- Uninstall: `rm -rf` the WINEPREFIX + launcher + vibe-edge-fix* + .desktop +
-  icons. The original installer stays in ~/Downloads.
+- Boot: ~15 s cold (CPU-bound app init under wine, measured — see §9);
+  relaunch while running is ~0.3 s. Log spam (`WSALookupServiceBegin failed`,
+  `desktop_secret_store_failed` safeStorage fallback, a 5 s transfer-rule
+  timeout) is harmless noise.
+- The app saves poisoned window bounds (`mainWindowBounds {x:-4,...}`) in
+  `Roaming/le-chat-desktop/config.json`; the watcher's snap is the operative
+  guard.
+- Wine-drawn dialogs/bevels are dark via the `HKCU\Control Panel\Colors`
+  palette (wine ships no .msstyles here, so some icons/toolbar remain
+  wine-era — that's the ceiling without third-party themes).
+- Tooling gotchas: `xwininfo`/`gnome-screenshot` are NOT installed on the
+  reference machine (use `xdotool getwindowgeometry --shell`, `wmctrl -lG`,
+  `xprop`, `import -window`); `import -window` fails on withdrawn windows;
+  wmctrl lists minimized but not withdrawn windows and its coordinates are
+  offset from xdotool's; `pkill -f` self-matches inline `bash -c` cmdlines —
+  use bracket patterns and run reset scripts from files; NEVER edit the
+  launcher while a watcher is running from it (sh re-reads the file at byte
+  offsets); never `wineserver -k` while the app should stay up; registry edits
+  go through GE's `files/bin/wine reg` (verify with `reg query`; `user.reg` on
+  disk lags).
+- After any Proton/GE upgrade, re-verify paint (`import -window <wid>` +
+  unique colors > 1) before trusting the layer.
+- Uninstall: `rm -rf` the WINEPREFIX + `~/.local/bin/vibe-desktop*`
+  + `~/.local/bin/vibe-edge-fix*` + `~/.local/bin/vibe-tray.py` + the
+  .desktop/autostart entries + icons. The original installer stays in
+  ~/Downloads.
+- Security note: this repo contains no secrets (scanned: worktree + full git
+  history — no tokens, keys, cookies, or credentials; only local path
+  references). The app's encrypted auth blob lives only in the wine prefix,
+  never in this repo.

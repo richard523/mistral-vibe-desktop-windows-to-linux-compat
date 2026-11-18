@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Mistral Vibe Desktop
+GenericName=AI Assistant
+Comment=Mistral Vibe Desktop (official Windows build via Proton/umu)
+Exec=/home/chardlinux/.local/bin/vibe-desktop
+Icon=mistral-vibe-desktop
+Terminal=false
+Categories=Network;InstantMessaging;
+StartupWMClass=steam_app_0
+Keywords=mistral;vibe;ai;chat;agent;coding;
