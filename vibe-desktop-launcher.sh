@@ -82,18 +82,12 @@ show_wid() {
     fi
 }
 
-# clickable tray icon (the app's own Windows tray icon never reaches GNOME);
-# clicking it runs this launcher, which shows or relaunches the app
-ensure_tray() {
-    pgrep -f 'vibe-tray.p[y]' > /dev/null 2>&1 || setsid python3 "$HOME/.local/bin/vibe-tray.py" > /dev/null 2>&1 &
-}
 
 # Already running? Ensure daemons, then either re-show the window (fast path)
 # or, if it was closed to tray (windowless), trigger the second-instance handoff
 # in the background and return - a tray click must never hang.
 if pgrep -f 'Vibe\.exe' > /dev/null 2>&1; then
     pgrep -f 'vibe-edge-fix --watc[h]' > /dev/null 2>&1 || "$HOME/.local/bin/vibe-edge-fix" --watch > /dev/null 2>&1 &
-    ensure_tray
     WID=$(find_main)
     if [ -n "$WID" ]; then
         show_wid "$WID" 1
@@ -136,7 +130,6 @@ fi
         sleep 1
     done
     "$HOME/.local/bin/vibe-edge-fix" --watch > /dev/null 2>&1 &
-    ensure_tray
     while pgrep -f 'Vibe\.exe' > /dev/null 2>&1; do
         # Keep the previous main window while it lives and stays visible - so a
         # transient popup can't steal "main" and get the chat window hidden.
@@ -176,11 +169,9 @@ fi
         fi
         [ -z "$WID" ] && { sleep 1; continue; }
         set_skip_taskbar "$WID" 0
-        # un-minimize the main window if it ever got hidden (close-to-tray etc.)
-        case "$(xprop -id "$WID" _NET_WM_STATE 2>/dev/null)" in
-            *HIDDEN*) wmctrl -i -a "$WID" 2>/dev/null ;;
-            *) show_wid "$WID" 0 ;;
-        esac
+        # Do NOT show/activate the main window here: the user closing it
+        # (close-to-tray) must stick. Restore happens only on explicit click
+        # (dock/launcher fast path or the app's own tray icon).
         "$HOME/.local/bin/vibe-edge-fix" "$WID" >/dev/null 2>&1
         # hide helper/popup windows (everything but the main window), but never
         # touch a FOCUSED window - that's an active popup (file dialog, or the

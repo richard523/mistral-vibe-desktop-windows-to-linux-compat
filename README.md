@@ -204,33 +204,22 @@ Implications / mitigations (implemented):
   (The app's own `openAtLogin` config writes a Windows Run key, which does
   nothing under wine - hence the XDG entry.)
 
-## 10. Clickable tray icon (`vibe-tray.py`)
+## 10. Tray icon & close-to-tray
 
-The app's own Windows tray icon never reaches the GNOME desktop (wine has no
-SNI/XEmbed owner here; `_NET_SYSTEM_TRAY_S0` has no owner), so `vibe-tray.py`
-(a tiny AyatanaAppIndicator3 daemon — the `appindicatorsupport` GNOME extension
-is installed and shows it in the top bar) provides the icon instead:
-- **left-click / "Show Vibe"** runs `~/.local/bin/vibe-desktop`, which:
-  - app running with a window (even minimized): `wmctrl -i -a` — restores in
-    ~50-90 ms (measured)
-  - app running but windowless (closed to tray): the Electron second-instance
-    handoff does NOT reliably recreate the window under wine (measured), so the
-    launcher kills the app and re-execs itself in the background → full
-    cold-start path (watcher + edge-fix + app); the click returns immediately
-    and the window is back after one cold boot (~15 s)
-  - app not running: normal cold start
-- **"Quit Vibe"** kills the app.
-- Icon dims (PASSIVE) while the app isn't running; clicking still launches it.
-- Started by the launcher (`ensure_tray`) and via XDG autostart
-  (`vibe-tray.desktop` in ~/.config/autostart).
-- Close-vs-minimize caveat (measured): the app DESTROYS its X window on close
-  (close-to-tray; the id is gone afterwards — BadWindow), and the Electron
-  second-instance handoff does not recreate it under wine, so restoring after a
-  real close is necessarily a background cold relaunch (~15 s; the launcher
-  pops a "Restoring window..." notification). Using the window's MINIMIZE
-  button instead keeps the window managed (HIDDEN) and the tray click restores
-  it in ~50-90 ms. The app's own `showTrayIconEnabled` is set to false
-  (install.sh does this) since its Windows tray icon never reaches GNOME.
+- The app's OWN tray icon is kept (`showTrayIconEnabled: true` in the app's
+  config.json; install.sh sets this). Under wine it is surfaced through wine's
+  StatusNotifier registration when available; there is deliberately NO custom
+- Close-to-tray now sticks: the watcher no longer re-shows/un-minimizes the
+  main window (that was the "minimizes then comes back to fullscreen" bug —
+  verified fixed: window stays hidden 10s+ after close). Restore happens only
+  on explicit action: clicking the app's tray icon (app re-shows its window in
+  the same process), or the dock icon / `vibe-desktop` launcher.
+- Launcher restore paths (measured): window present (even minimized) ->
+  `wmctrl -i -a` in ~50-90 ms; windowless (real close destroys the X window
+  under wine — BadWindow afterwards — and the second-instance handoff does not
+  recreate it) -> background cold relaunch, click returns in ~4 s, window back
+  after ~15 s, with a "Restoring window..." notification.
+- Launcher also pops that notification on the windowless path.
 
 ## 8. Files in this repo
 
@@ -239,10 +228,8 @@ is installed and shows it in the top bar) provides the icon instead:
 | `install.sh` | one-shot installer: extracts app-64.7z into the prefix, installs scripts, compiles edge-fix, installs .desktop/autostart entries |
 | `vibe-desktop-launcher.sh` | the launcher (installed to `~/.local/bin/vibe-desktop`) |
 | `vibe-edge-fix.c` | white-edge fixer, compiled to `~/.local/bin/vibe-edge-fix` (`cc -O2 -lX11`) |
-| `vibe-tray.py` | GNOME top-bar tray icon daemon (AppIndicator) |
 | `mistral-vibe-desktop.desktop` | app entry (install.sh rewrites the Exec path to $HOME) |
 | `autostart-mistral-vibe-desktop.desktop` | XDG autostart for the app (boot at login) |
-| `vibe-tray-autostart.desktop` | XDG autostart for the tray icon |
 | `tools/` | verification harness used during development (boot timing, window enum, edge scan, cold-launch repro, tray-restore test) — dev-only, not needed to run the app |
 | `LICENSE` | MIT for the scripts/docs here; the Vibe Desktop app itself is proprietary and NOT distributed in this repo |
 
@@ -259,7 +246,6 @@ is installed and shows it in the top bar) provides the icon instead:
   full background relaunch (~15 s cold boot). The app's own `openAtLogin`
   config is a no-op under wine (writes a Windows Run key) — use the XDG
   autostart entry instead.
-- The tray icon in the top bar is ours (`vibe-tray.py`); the app's own Windows
   tray icon never reaches GNOME.
 - Dictation: the Dictation overlay window is withdrawn while idle and left
   alone while focused, so voice input works; if it ever misbehaves, delete the
@@ -288,7 +274,6 @@ is installed and shows it in the top bar) provides the icon instead:
 - After any Proton/GE upgrade, re-verify paint (`import -window <wid>` +
   unique colors > 1) before trusting the layer.
 - Uninstall: `rm -rf` the WINEPREFIX + `~/.local/bin/vibe-desktop*`
-  + `~/.local/bin/vibe-edge-fix*` + `~/.local/bin/vibe-tray.py` + the
   .desktop/autostart entries + icons. The original installer stays in
   ~/Downloads.
 - Security note: this repo contains no secrets (scanned: worktree + full git

@@ -1,7 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=Vibe Tray Icon
-Exec=/usr/bin/python3 /home/chardlinux/.local/bin/vibe-tray.py
-Icon=mistral-vibe-desktop
-Terminal=false
-X-GNOME-Autostart-enabled=true
