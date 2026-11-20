@@ -10,6 +10,46 @@ Reference machine: GNOME **Wayland** session with XWayland, Intel Iris Xe,
 
 ---
 
+## 671b8bc - linux-bridge agent skill (SSH out of the prefix to the real Linux host)
+
+User request: "add this to the repo as a generic skill — the agent needs to SSH
+into the Linux VM". The problem: Vibe's coding agent gets the prefix's Git Bash
+as its shell tool, and under wine it is severely degraded (measured, on the
+reference machine, this session):
+
+- `$(...)` and `$?` hang every call; foreground `mkdir`/`chmod`/`ssh-keygen`
+  hang; writes from Git Bash to the `Z:` mount often hang; local pipes are
+  unreliable; `start /unix` hangs; SSH ControlMaster fails with `muxclient:
+  master hello exchange failed` (the AF_UNIX socket emulation is broken).
+- Inside the prefix there is no python/node/gcc — every real toolchain is on
+  the Linux side, which is one TCP hop away because wine shares the host
+  network (`localhost` = the Linux machine).
+
+The skill (`skills/linux-bridge/SKILL.md`, machine-independent — no hostnames
+or usernames baked in) encodes the working recipe:
+
+- Setup: ed25519 keypair generated inside the prefix (background process,
+  stdin redirected), pubkey appended to the host's `authorized_keys` via the
+  `Z:` mount with the harness file tools, `ssh <user>@localhost` (or the VM's
+  address in a VM setup).
+- Usage: every command is a script streamed to remote `/bin/bash -s` (never
+  the login shell — fish), `tr -d "\r"` on the far side (file writes inside
+  the Windows environment are CRLF), always run as a background process polled
+  to an `__LX_DONE__` marker and then reaped, because ssh hangs at exit under
+  wine. Measured: ~1-2 s round trip per command.
+- Files read/write directly through `Z:` paths via the harness file tools
+  (verified read and write, correct host ownership), long jobs `nohup` +
+  log-poll, dev servers as streamed background ssh.
+- And the dead-end list so the agent never rediscovers them.
+
+Change to the installer: `install.sh` now copies the skill into the prefix's
+own `drive_c/users/$USER/.vibe/skills` — the directory the app's agent reads
+user skills from (verified on the reference machine: the app config dir is
+`drive_c/users/<user>/.vibe`). So after install/re-install, every new coding
+session already knows how to reach the Linux side.
+
+---
+
 ## 467e5dc - Git for Windows installed inside the prefix (the app had no git)
 
 User request: "install git in this proton". The app's coding features call

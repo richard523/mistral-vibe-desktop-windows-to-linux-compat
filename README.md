@@ -282,6 +282,7 @@ Implications / mitigations (implemented):
 | `vibe-edge-fix.c` | white-edge fixer, compiled to `~/.local/bin/vibe-edge-fix` (`cc -O2 -lX11`) |
 | `mistral-vibe-desktop.desktop` | app entry (install.sh rewrites the Exec path to $HOME) |
 | `autostart-mistral-vibe-desktop.desktop` | XDG autostart for the app (boot at login) |
+| `skills/linux-bridge/SKILL.md` | Vibe **agent skill** (installed by `install.sh` into the prefix's `.vibe/skills`): gives the coding agent an SSH bridge out of the broken prefix Git-Bash to the real Linux host — §13 |
 | `tools/` | verification harness used during development (boot timing, window enum, edge scan, cold-launch repro, and `test-dock-restore.sh` — asserts dock-click restore + close-to-tray still works after it) — dev-only, not needed to run the app |
 | `CHANGELOG.md` | every change made while getting this to work, newest first, with the measured numbers |
 | `LICENSE` | MIT for the scripts/docs here; the Vibe Desktop app itself is proprietary and NOT distributed in this repo |
@@ -402,3 +403,43 @@ prefix gets its own Windows git — `install.sh` does all of this:
 - **Limits**: no symlinks (`core.symlinks = false`), exec-bit changes are
   invisible (the override above), and credentials go to Git for Windows' own
   helper (`helper-selector` / GCM) — interactive auth under Proton is untested.
+
+## 13. Agent bridge to the Linux host (`skills/linux-bridge`)
+
+Vibe's coding agent uses the prefix's Git Bash (§12) as its shell tool, and
+under wine that shell is degraded well beyond missing `git`: measured on the
+reference machine, `$(...)` and `$?` hang every call, foreground
+`mkdir`/`chmod`/`ssh-keygen` hang, and writes from Git Bash to the `Z:` mount
+(the Linux root) often hang. There is no real toolchain inside the prefix —
+python, node, gcc, cargo live only on the host, which is one TCP hop away:
+wine shares the host network, so `localhost` inside the session IS the Linux
+machine.
+
+`skills/linux-bridge/SKILL.md` (installed by `install.sh` into
+`$PREFIX/drive_c/users/$USER/.vibe/skills`, where the app's agent discovers
+user skills) teaches the agent, in one self-contained page:
+
+- **Build the bridge**: generate an ed25519 pair inside the prefix
+  (`ssh-keygen` via a background process with stdin redirected — foreground
+  hangs), append the pubkey to the host's `~/.ssh/authorized_keys` through
+  the `Z:` mount using the harness file tools (Git Bash writes to Z: hang),
+  verify `ssh $USER@localhost`. Works the same whether the Linux side is the
+  bare host or a VM — only the target address changes (`localhost` vs the
+  VM's address).
+- **Run every command on the Linux side**: stream a script to `/bin/bash -s`
+  over ssh (never pass commands to the login shell — fish rejects POSIX
+  loops), with `tr -d "\r"` on the far side (file writes inside the Windows
+  environment produce CRLF; remote bash chokes on `\r`), always as a
+  background process polled to an end-marker, because ssh hangs at exit under
+  wine. Measured round trip: ~1-2 s per command.
+- **Files** through the `Z:` paths with the harness file tools (verified
+  working read AND write, correct ownership), long jobs via `nohup` + log
+  polling, dev servers as streamed background ssh.
+- **Dead ends** the skill forbids rediscovering: ControlMaster/mux
+  (`muxclient: master hello exchange failed` — AF_UNIX emulation broken),
+  `start /unix`, foreground everything above.
+
+Undo = delete the `vibe-bridge` line from `authorized_keys` and
+`~/.ssh/vibe-bridge*` inside the prefix. Verified end-to-end on the reference
+machine (key auth, python/node/gcc execution, file writes through Z:,
+long-job pattern) before committing the skill.

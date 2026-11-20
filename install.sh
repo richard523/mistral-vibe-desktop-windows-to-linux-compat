@@ -67,6 +67,13 @@ sed "s|/home/chardlinux|$HOME|g" "$HERE/mistral-vibe-desktop.desktop" > "$HOME/.
 sed "s|/home/chardlinux|$HOME|g" "$HERE/autostart-mistral-vibe-desktop.desktop" > "$HOME/.config/autostart/mistral-vibe-desktop.desktop"
 update-desktop-database "$HOME/.local/share/applications" 2>/dev/null || true
 
+echo "== agent skill: linux-bridge (SSH bridge from the wine session to THIS"
+echo "   Linux host; the prefix Git-Bash shell is too broken for real work - README §13)"
+VIBE_SKILLS="$PREFIX/drive_c/users/$USER/.vibe/skills"
+mkdir -p "$VIBE_SKILLS"
+rm -rf "$VIBE_SKILLS/linux-bridge"
+cp -a "$HERE/skills/linux-bridge" "$VIBE_SKILLS/"
+
 echo "== dark wine palette (wine-drawn bevels + file dialogs)"
 WINEPREFIX="$PREFIX" "$GE/files/bin/wine" reg add 'HKCU\Control Panel\Colors' /v ActiveBorder /d '48 48 54' /f >/dev/null 2>&1 || true
 # (full palette used on the reference machine is in README.md section 4)
