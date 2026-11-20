@@ -10,7 +10,7 @@ Reference machine: GNOME **Wayland** session with XWayland, Intel Iris Xe,
 
 ---
 
-## 671b8bc - linux-bridge agent skill (SSH out of the prefix to the real Linux host)
+## fbde8cb - linux-bridge agent skill (SSH out of the prefix to the real Linux host)
 
 User request: "add this to the repo as a generic skill — the agent needs to SSH
 into the Linux VM". The problem: Vibe's coding agent gets the prefix's Git Bash
